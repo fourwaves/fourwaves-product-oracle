@@ -1,0 +1,41 @@
+name: Run Product Oracle
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: product-oracle
+  cancel-in-progress: false
+
+jobs:
+  oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Product Oracle
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          ORACLE_CHANNEL_ID: ${{ secrets.ORACLE_CHANNEL_ID }}
+          INTERCOM_TOKEN: ${{ secrets.INTERCOM_TOKEN }}
+        run: python oracle.py --slack-poll
+
+      - name: Commit processed messages log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add oracle_processed_messages.json
+          git diff --cached --quiet || git commit -m "Update processed messages log" && git push || true
