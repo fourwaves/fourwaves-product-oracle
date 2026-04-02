@@ -1,22 +1,24 @@
 {
   "1775149311.333689": {
     "status": "error",
-    "error": "No LLM backend available. Set GEMINI_API_KEY.",
-    "date": "2026-04-02T17:19:55.585771"
+    "skill": "insights",
+    "error": "401 Client Error: Unauthorized for url: https://api.notion.com/v1/databases/2b98b055-517b-8067-95b2-c15baabe75ca/query",
+    "date": "2026-04-02T17:30:26.830284"
   },
   "1775138866.210489": {
-    "status": "error",
-    "error": "No LLM backend available. Set GEMINI_API_KEY.",
-    "date": "2026-04-02T17:19:55.586134"
+    "status": "no_skill",
+    "date": "2026-04-02T17:30:27.402924"
   },
   "1775138365.210339": {
     "status": "error",
-    "error": "No LLM backend available. Set GEMINI_API_KEY.",
-    "date": "2026-04-02T17:19:55.586455"
+    "skill": "insights",
+    "error": "401 Client Error: Unauthorized for url: https://api.notion.com/v1/databases/2b98b055-517b-8067-95b2-c15baabe75ca/query",
+    "date": "2026-04-02T17:30:36.530375"
   },
   "1775138314.295329": {
     "status": "error",
-    "error": "No LLM backend available. Set GEMINI_API_KEY.",
-    "date": "2026-04-02T17:19:55.586781"
+    "skill": "insights",
+    "error": "401 Client Error: Unauthorized for url: https://api.notion.com/v1/databases/2b98b055-517b-8067-95b2-c15baabe75ca/query",
+    "date": "2026-04-02T17:30:45.650978"
   }
 }
