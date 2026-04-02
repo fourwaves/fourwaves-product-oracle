@@ -221,10 +221,10 @@ def load_last_poll_ts():
     return str(time.time() - 86400)  # 24 hours ago on first run
 
 
-def save_last_poll_ts():
-    """Save current time as the last poll timestamp."""
+def save_last_poll_ts(ts=None):
+    """Save the last poll timestamp. Uses current time if no ts provided."""
     with open(LAST_POLL_FILE, "w") as f:
-        f.write(str(time.time()))
+        f.write(str(ts or time.time()))
 
 
 def run_slack_poll():
@@ -481,7 +481,17 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
             }
             save_processed_messages(processed)
 
-    save_last_poll_ts()
+    # Advance poll timestamp, but not past any errored messages (so they get retried)
+    error_timestamps = [
+        float(ts) for ts, entry in processed.items()
+        if entry.get("status") == "error" and ":" not in ts
+    ]
+    if error_timestamps:
+        # Set poll to just before the oldest error so it gets re-fetched
+        save_last_poll_ts(min(error_timestamps) - 1)
+        log.info(f"Poll timestamp set before oldest error for retry.")
+    else:
+        save_last_poll_ts()
     log.info("Polling complete.")
 
 
