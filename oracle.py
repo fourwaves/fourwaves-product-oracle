@@ -251,7 +251,7 @@ def run_slack_poll():
     new_queries = []
     for msg in messages:
         ts = msg.get("ts", "")
-        if ts in processed:
+        if ts in processed and processed[ts].get("status") != "error":
             continue
         if msg.get("bot_id") or msg.get("subtype"):
             continue
