@@ -96,7 +96,7 @@ def notion_url_to_page_id(url):
 # ---------------------------------------------------------------------------
 
 def fetch_notion_page(page_id):
-    """Fetch a Notion page's properties and block content."""
+    """Fetch a Notion page's properties and only the QA Notes section content."""
     # Get page properties
     resp = requests.get(
         f"https://api.notion.com/v1/pages/{page_id}",
@@ -113,17 +113,57 @@ def fetch_notion_page(page_id):
             title = " ".join(t.get("plain_text", "") for t in prop.get("title", []))
             break
 
-    # Get block children (the actual content)
-    blocks_text = fetch_notion_blocks(page_id)
+    # Get all top-level blocks, then extract only content after "QA Notes" heading
+    blocks_text = fetch_notion_blocks_qa_only(page_id)
 
     return {"id": page_id, "title": title, "content": blocks_text}
 
 
-def fetch_notion_blocks(block_id, depth=0):
-    """Recursively fetch all block content from a Notion page."""
-    if depth > 5:
+def fetch_notion_blocks_qa_only(page_id):
+    """Fetch all top-level blocks and return only content under the QA Notes section."""
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    all_blocks = []
+    has_more = True
+    start_cursor = None
+
+    while has_more:
+        params = {"page_size": 100}
+        if start_cursor:
+            params["start_cursor"] = start_cursor
+        resp = requests.get(url, headers=NOTION_HEADERS, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        all_blocks.extend(data.get("results", []))
+        has_more = data.get("has_more", False)
+        start_cursor = data.get("next_cursor")
+
+    # Find the QA Notes heading and collect everything after it
+    qa_section_started = False
+    qa_blocks = []
+
+    for block in all_blocks:
+        block_type = block.get("type", "")
+        block_data = block.get(block_type, {})
+        rich_text = block_data.get("rich_text", [])
+        text = " ".join(t.get("plain_text", "") for t in rich_text)
+
+        if block_type.startswith("heading") and "qa notes" in text.lower().replace("🧪", "").strip().lower():
+            qa_section_started = True
+            continue  # Skip the heading itself
+
+        if qa_section_started:
+            qa_blocks.append(block)
+
+    if not qa_blocks:
+        log.warning(f"No 'QA Notes' section found in page {page_id}. Returning empty content.")
         return ""
 
+    # Render the QA blocks to text
+    return render_blocks(qa_blocks)
+
+
+def fetch_child_blocks(block_id):
+    """Fetch all child blocks of a given block."""
     url = f"https://api.notion.com/v1/blocks/{block_id}/children"
     all_blocks = []
     has_more = True
@@ -140,17 +180,24 @@ def fetch_notion_blocks(block_id, depth=0):
         has_more = data.get("has_more", False)
         start_cursor = data.get("next_cursor")
 
+    return all_blocks
+
+
+def render_blocks(blocks, depth=0):
+    """Render a list of Notion blocks to plain text, recursing into children."""
+    if depth > 5:
+        return ""
+
     parts = []
-    for block in all_blocks:
+    for block in blocks:
         block_type = block.get("type", "")
         block_data = block.get(block_type, {})
 
-        # Extract text from rich_text arrays
         rich_text = block_data.get("rich_text", [])
         text = " ".join(t.get("plain_text", "") for t in rich_text)
 
         if block_type.startswith("heading"):
-            level = block_type[-1]  # heading_1 → 1
+            level = block_type[-1]
             parts.append(f"\n{'#' * int(level)} {text}\n")
         elif block_type == "paragraph":
             parts.append(text)
@@ -177,7 +224,8 @@ def fetch_notion_blocks(block_id, depth=0):
 
         # Recurse into children
         if block.get("has_children"):
-            child_text = fetch_notion_blocks(block["id"], depth + 1)
+            child_blocks = fetch_child_blocks(block["id"])
+            child_text = render_blocks(child_blocks, depth + 1)
             if child_text:
                 parts.append(child_text)
 
@@ -300,16 +348,25 @@ def handle_kb_update(message_text, call_llm_fn):
     if not notion_pages:
         return "I couldn't fetch any of the Notion pages. Please check the URLs and make sure the Notion integration has access to those pages."
 
-    # 3. Understand the release scope
-    release_summary_prompt = """Analyze these product release/feature pages and create a clear summary of:
+    # Check for empty QA Notes sections
+    empty_pages = [p for p in notion_pages if not p["content"].strip()]
+    if empty_pages:
+        empty_names = ", ".join(f"*{p['title']}*" for p in empty_pages)
+        if len(empty_pages) == len(notion_pages):
+            return f"I couldn't find any content under the *QA Notes* section for: {empty_names}. I only read the QA Notes section of Notion feature pages. Please make sure the section exists and has content."
+
+    # 3. Understand the release scope (from QA Notes only)
+    release_summary_prompt = """You are reading QA Notes from product feature pages. These notes describe what was built and how the feature works.
+
+Analyze the QA Notes and create a clear summary of:
 1. What new features or changes were released
-2. What functionality they add or modify
-3. Key details a technical writer would need to update documentation
+2. What functionality they add or modify — describe the user-facing behavior
+3. Key details a technical writer would need to update help center documentation
 
 Be specific and thorough. This summary will be used to identify which help center articles need updating."""
 
     pages_content = "\n\n===\n\n".join(
-        f"PAGE: {p['title']}\n\n{p['content']}" for p in notion_pages
+        f"PAGE: {p['title']}\n\nQA NOTES:\n{p['content']}" for p in notion_pages
     )
 
     release_summary = call_llm_fn(release_summary_prompt, pages_content, model_hint="pro")
@@ -465,12 +522,17 @@ If NOT needed, return: {"needed": false}"""
         json.dump(pending, f, indent=2)
 
     # 9. Format the Slack response
-    return format_proposal_message(detailed_proposals, new_article_plan, len(published), notion_pages)
+    return format_proposal_message(detailed_proposals, new_article_plan, len(published), notion_pages, release_summary)
 
 
-def format_proposal_message(proposals, new_article_plan, total_articles, notion_pages):
+def format_proposal_message(proposals, new_article_plan, total_articles, notion_pages, release_summary):
     """Format the change proposal as a Slack mrkdwn message."""
     parts = []
+
+    # Feature summary from QA Notes — serves as validation
+    parts.append("*FEATURE SUMMARY (from QA Notes):*\n")
+    parts.append(release_summary)
+    parts.append("\n---\n")
 
     feature_names = ", ".join(p["title"] for p in notion_pages)
     parts.append(f"I've analyzed the release ({feature_names}) against all {total_articles} published help center articles.\n")
