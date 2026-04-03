@@ -64,6 +64,17 @@ def html_to_text(html):
     return extractor.get_text().strip()
 
 
+def strip_code_fences(text):
+    """Remove markdown code fences from LLM output."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+    return text
+
+
 def extract_notion_urls(text):
     """Extract Notion page URLs from a Slack message."""
     # Slack wraps URLs in <url> or <url|label>
@@ -270,8 +281,8 @@ def format_article_for_scoring(article):
     )
 
 
-def update_intercom_article(article_id, title=None, body=None, description=None):
-    """Update an Intercom article."""
+def update_intercom_article(article_id, title=None, body=None, description=None, translated_content=None):
+    """Update an Intercom article. Use translated_content to update specific locales."""
     payload = {}
     if title:
         payload["title"] = title
@@ -279,6 +290,8 @@ def update_intercom_article(article_id, title=None, body=None, description=None)
         payload["body"] = body
     if description:
         payload["description"] = description
+    if translated_content:
+        payload["translated_content"] = translated_content
 
     resp = requests.put(
         f"https://api.intercom.io/articles/{article_id}",
@@ -289,7 +302,7 @@ def update_intercom_article(article_id, title=None, body=None, description=None)
     return resp.json()
 
 
-def create_intercom_article(title, body, description="", parent_id=None, parent_type=None, state="draft"):
+def create_intercom_article(title, body, description="", parent_id=None, parent_type=None, state="draft", translated_content=None):
     """Create a new Intercom article (as draft by default)."""
     payload = {
         "title": title,
@@ -302,6 +315,8 @@ def create_intercom_article(title, body, description="", parent_id=None, parent_
     if parent_id:
         payload["parent_id"] = parent_id
         payload["parent_type"] = parent_type or "collection"
+    if translated_content:
+        payload["translated_content"] = translated_content
 
     resp = requests.post(
         "https://api.intercom.io/articles",
@@ -596,6 +611,7 @@ def format_proposal_message(proposals, new_article_plan, total_articles, notion_
         parts.append("After detailed analysis, no changes are needed for any existing articles and no new article is recommended.")
         return "\n".join(parts)
 
+    parts.append("\n_Note: When approved, changes will be applied to both English and French versions of each article._")
     parts.append("\n---")
     parts.append("You can ask me to revise the proposal, or reply *yes, proceed* to apply the changes.")
 
@@ -736,18 +752,19 @@ Return ONLY the JSON object, nothing else."""
         log.info(f"Updating article {article_id}: {article_title}")
 
         try:
-            # Fetch current article content
+            # Fetch current article content (includes translated_content)
             resp = requests.get(
                 f"https://api.intercom.io/articles/{article_id}",
                 headers=INTERCOM_HEADERS,
             )
             resp.raise_for_status()
             current = resp.json()
+
+            # --- English update ---
             current_body = current.get("body", "")
             current_title = current.get("title", "")
             current_description = current.get("description", "")
 
-            # Generate updated HTML body
             update_prompt = """You are updating a help center article's HTML content based on approved changes.
 
 Given the current HTML body and the specific changes to make, produce the updated HTML body.
@@ -770,19 +787,59 @@ RULES:
                 f"CURRENT HTML BODY:\n{current_body}"
             )
 
-            new_body = call_llm_fn(update_prompt, user_prompt, model_hint="pro")
+            new_en_body = strip_code_fences(call_llm_fn(update_prompt, user_prompt, model_hint="pro"))
 
-            # Clean up LLM output (remove markdown code fences if present)
-            if new_body.startswith("```"):
-                new_body = new_body.split("\n", 1)[1]
-                if new_body.endswith("```"):
-                    new_body = new_body[:-3]
-                new_body = new_body.strip()
+            # --- French update (if French version exists) ---
+            translated = current.get("translated_content", {})
+            fr_content = translated.get("fr", {})
+            fr_body = fr_content.get("body", "")
+            fr_title = fr_content.get("title", "")
+            fr_description = fr_content.get("description", "")
 
-            # Apply the update
-            update_intercom_article(article_id, body=new_body)
+            new_fr_body = None
+            if fr_body:
+                fr_update_prompt = """You are updating the FRENCH version of a help center article's HTML content.
+
+You are given:
+1. The changes that were approved (described in English)
+2. The updated ENGLISH HTML body (already approved)
+3. The current FRENCH HTML body
+
+Apply the equivalent changes to the French body. The French version should convey the same information as the English version, but naturally translated — not a word-for-word translation.
+
+RULES:
+- Preserve the existing French HTML structure and formatting exactly
+- Only change sections that correspond to the English changes
+- Keep the same HTML tags and CSS classes
+- Match the tone and style of the existing French content
+- Use "vous" form (formal), consistent with the existing French articles
+- Translate UI labels to their French equivalents (e.g., "Event Data" → "Données", "Registrations" → "Inscriptions", "Actions" → "Actions", "Save and continue" → "Sauvegarder et continuer")
+- Return ONLY the updated French HTML body, nothing else"""
+
+                fr_user_prompt = (
+                    f"CHANGES (English):\n{changes_description}\n\n"
+                    f"UPDATED ENGLISH HTML:\n{new_en_body[:3000]}\n\n"
+                    f"CURRENT FRENCH TITLE: {fr_title}\n"
+                    f"CURRENT FRENCH DESCRIPTION: {fr_description}\n"
+                    f"CURRENT FRENCH HTML BODY:\n{fr_body}"
+                )
+
+                new_fr_body = strip_code_fences(call_llm_fn(fr_update_prompt, fr_user_prompt, model_hint="pro"))
+
+            # Apply the updates (both languages in one API call)
+            if new_fr_body:
+                update_intercom_article(
+                    article_id,
+                    body=new_en_body,
+                    translated_content={"fr": {"body": new_fr_body}},
+                )
+                lang_note = " (EN + FR)"
+            else:
+                update_intercom_article(article_id, body=new_en_body)
+                lang_note = " (EN only — no French version found)"
+
             url = article.get("url", article_url)
-            results.append(f"Updated: *{article_title}*\n   {url}")
+            results.append(f"Updated: *{article_title}*{lang_note}\n   {url}")
 
         except Exception as e:
             log.error(f"Failed to update article {article_id}: {e}")
@@ -822,22 +879,61 @@ CONTENT RULES:
                 f"Outline: {new_article_plan.get('outline', '')}"
             )
 
-            body_html = call_llm_fn(create_prompt, outline, model_hint="pro")
+            body_html = strip_code_fences(call_llm_fn(create_prompt, outline, model_hint="pro"))
 
-            if body_html.startswith("```"):
-                body_html = body_html.split("\n", 1)[1]
-                if body_html.endswith("```"):
-                    body_html = body_html[:-3]
-                body_html = body_html.strip()
+            # Generate French version
+            fr_prompt = """Translate this help center article to French. You are given:
+1. The English HTML body
+2. The English title and description
+
+Produce a JSON object with three fields:
+{"title": "French title", "description": "French description", "body": "French HTML body"}
+
+RULES:
+- Naturally translate, not word-for-word
+- Use "vous" form (formal)
+- Keep the same HTML structure and tags
+- Translate UI labels to their French equivalents used in the Fourwaves app
+- FRENCH TITLE: Use imperative verb form in French, concise (3-8 words)
+- FRENCH DESCRIPTION: Start with "Cet article explique comment..." — one sentence, period at end
+- Return ONLY the JSON object"""
+
+            fr_raw = call_llm_fn(
+                fr_prompt,
+                f"ENGLISH TITLE: {new_article_plan.get('title', '')}\n"
+                f"ENGLISH DESCRIPTION: {new_article_plan.get('description', '')}\n"
+                f"ENGLISH HTML BODY:\n{body_html}",
+                model_hint="pro",
+            )
+
+            fr_data = None
+            try:
+                fr_cleaned = strip_code_fences(fr_raw)
+                fr_data = json.loads(fr_cleaned)
+            except (json.JSONDecodeError, AttributeError):
+                log.warning("Failed to generate French translation for new article")
+
+            translated_content = None
+            if fr_data:
+                translated_content = {
+                    "fr": {
+                        "title": fr_data.get("title", ""),
+                        "description": fr_data.get("description", ""),
+                        "body": fr_data.get("body", ""),
+                        "author_id": INTERCOM_AUTHOR_ID,
+                    }
+                }
 
             result = create_intercom_article(
                 title=new_article_plan["title"],
                 body=body_html,
                 description=new_article_plan.get("description", ""),
                 state="draft",
+                translated_content=translated_content,
             )
             new_url = result.get("url", "")
-            results.append(f"Created (as draft): *{new_article_plan['title']}*\n   {new_url}")
+            lang_note = " (EN + FR)" if fr_data else " (EN only)"
+            results.append(f"Created (as draft): *{new_article_plan['title']}*{lang_note}\n   {new_url}")
 
         except Exception as e:
             log.error(f"Failed to create new article: {e}")
