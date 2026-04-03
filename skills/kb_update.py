@@ -444,9 +444,9 @@ If none are relevant, return: []"""
             """Based on this product release, propose a new help center article.
 
 TITLE FORMAT RULES:
-- Use imperative verb form (e.g., "Generate Badges", "Manage Tracks")
+- Use imperative verb form (e.g., "Generate badges", "Manage tracks")
 - Do NOT use gerund form or "How to..." prefix
-- Use Title Case, 3-8 words
+- Use sentence case (only capitalize the first letter of the first word, e.g., "Generate badges"), 3-8 words
 
 DESCRIPTION FORMAT RULES:
 - Start with "This article explains how to..." or "This article explains how you can..."
@@ -468,12 +468,14 @@ The outline should be a bullet-pointed structure of what the article should cove
 
     for article in relevant_articles:
         body_text = html_to_text(article.get("body", ""))
+        body_html = article.get("body", "")[:4000]
         article_detail = (
             f"ARTICLE: {article['title']}\n"
             f"ID: {article['id']}\n"
             f"URL: {article.get('url', 'N/A')}\n"
             f"Description: {article.get('description', '')}\n"
-            f"Current content:\n{body_text[:3000]}"
+            f"Current content (plain text):\n{body_text[:3000]}\n\n"
+            f"Current HTML (for header analysis):\n{body_html}"
         )
 
         proposal_prompt = """You are a technical writer updating help center documentation after a product release.
@@ -481,6 +483,11 @@ The outline should be a bullet-pointed structure of what the article should cove
 Given the release details and an existing help center article, determine what specific changes should be made.
 
 CRITICAL: Only propose changes that are DIRECTLY related to this article's topic. If the release affects a different feature than what this article covers, return NO_CHANGES. Do NOT propose adding content about tangentially related features.
+
+HEADER HIERARCHY RULES (very important):
+- Look at the existing HTML headers in the article (h1, h2, h3, etc.).
+- When adding new sections, MATCH the header level used by existing same-level sections. For example, if existing top-level sections use <h2>, new top-level sections must also use <h2>.
+- If you detect INCONSISTENT header levels (e.g., some top-level sections use <h1> and others use <h2>), mention that you will also normalize headers to be consistent. The standard is: top-level sections = <h2>, sub-sections = <h3>.
 
 WRITING STYLE for any new/edited text (must match existing articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -534,10 +541,10 @@ A new article is needed if:
 - Users would benefit from a dedicated guide
 
 TITLE FORMAT RULES (must follow exactly):
-- Use imperative verb form (e.g., "Generate Badges", "Create Rooms and Assign Them to Sessions", "Manage Tracks")
+- Use imperative verb form (e.g., "Generate badges", "Create rooms and assign them to sessions", "Manage tracks")
 - Do NOT use gerund form ("Generating...", "Creating...")
 - Do NOT use "How to..." prefix
-- Use Title Case (capitalize all major words)
+- Use sentence case (only capitalize the first letter of the first word, e.g., "Generate badges")
 - Keep it concise: 3-8 words
 - Be specific about the object being acted on
 
@@ -639,6 +646,10 @@ IMPORTANT:
 - If the user asked to remove a change, remove it entirely.
 - If the user corrected factual details, apply those corrections to the Before/After text.
 - Show the full revised proposal, not just what changed.
+
+HEADER HIERARCHY RULES:
+- When proposing new sections, match the header level used by existing same-level sections in the article.
+- If you notice inconsistent headers (e.g., mix of H1 and H2 for top-level sections), mention that you will normalize them: top-level = H2, sub-sections = H3.
 
 WRITING STYLE for any new/edited text (must match existing Fourwaves help center articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -773,6 +784,7 @@ RULES:
 - Preserve the existing HTML structure and formatting exactly
 - Only make the specified changes — do not rewrite unrelated sections
 - Keep the same HTML tags and CSS classes
+- HEADER HIERARCHY: When adding new sections, use the same header level as existing same-level sections. If top-level sections use <h2>, new top-level sections must use <h2>. If you see inconsistent headers (mix of <h1> and <h2> for same-level sections), normalize them: top-level = <h2>, sub-sections = <h3>.
 - If adding new content, match the style of the existing content exactly:
   * Short, straight-to-the-point sentences. No filler or marketing language.
   * Use <ul>/<ol> lists whenever possible instead of long paragraphs.
@@ -852,9 +864,9 @@ RULES:
             create_prompt = """Create a help center article in HTML format based on this outline.
 
 TITLE FORMAT RULES (for the article title — must follow exactly):
-- Use imperative verb form (e.g., "Generate Badges", "Create Rooms and Assign Them to Sessions")
+- Use imperative verb form (e.g., "Generate badges", "Create rooms and assign them to sessions")
 - Do NOT use gerund form ("Generating...") or "How to..." prefix
-- Use Title Case (capitalize all major words)
+- Use sentence case (only capitalize the first letter of the first word, e.g., "Generate badges")
 - Keep it concise: 3-8 words
 
 DESCRIPTION FORMAT RULES (for the short subtitle — must follow exactly):
