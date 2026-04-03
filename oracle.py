@@ -87,7 +87,7 @@ def slack_api(method, http_method="POST", **kwargs):
 
 
 def slack_post_message(channel, text, thread_ts=None):
-    kwargs = {"channel": channel, "text": text}
+    kwargs = {"channel": channel, "text": text, "unfurl_links": False, "unfurl_media": False}
     if thread_ts:
         kwargs["thread_ts"] = thread_ts
     return slack_api("chat.postMessage", **kwargs)
@@ -142,13 +142,34 @@ Output ONLY the message, nothing else."""
 
 
 def split_response(text, max_len=39000):
+    """Split text into chunks that fit Slack's limit, never cutting inside code blocks."""
     chunks = []
     while len(text) > max_len:
-        split_at = text.rfind("\n\n", 0, max_len)
-        if split_at < max_len // 2:
-            split_at = max_len
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip("\n")
+        # Find a safe split point: a double newline that's NOT inside a code block
+        best_split = -1
+        search_end = max_len
+
+        # Count open/close ``` pairs to know if we're inside a code block
+        while search_end > max_len // 4:
+            pos = text.rfind("\n\n", 0, search_end)
+            if pos < 0:
+                break
+            # Count ``` occurrences before this position
+            prefix = text[:pos]
+            backtick_count = prefix.count("```")
+            if backtick_count % 2 == 0:
+                # Even count = we're outside a code block, safe to split
+                best_split = pos
+                break
+            # Inside a code block — try an earlier split point
+            search_end = pos
+
+        if best_split < 0:
+            # Fallback: force split at max_len (shouldn't happen often)
+            best_split = max_len
+
+        chunks.append(text[:best_split])
+        text = text[best_split:].lstrip("\n")
     if text:
         chunks.append(text)
     return chunks
