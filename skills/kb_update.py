@@ -316,9 +316,6 @@ def create_intercom_article(title, body, description="", parent_id=None, parent_
 # Skill handler: propose KB changes
 # ---------------------------------------------------------------------------
 
-CHANGES_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pending_changes.json")
-
-
 def handle_kb_update(message_text, call_llm_fn):
     """
     Phase 1: Analyze Notion pages + Intercom articles, propose changes.
@@ -563,17 +560,7 @@ If NOT needed, return: {"needed": false}"""
     except (json.JSONDecodeError, AttributeError):
         pass
 
-    # 8. Save pending changes for execution phase
-    pending = {
-        "notion_pages": [{"id": p["id"], "title": p["title"]} for p in notion_pages],
-        "release_summary": release_summary,
-        "article_updates": detailed_proposals,
-        "new_article": new_article_plan,
-    }
-    with open(CHANGES_CACHE_FILE, "w") as f:
-        json.dump(pending, f, indent=2)
-
-    # 9. Format the Slack response
+    # 8. Format the Slack response
     return format_proposal_message(detailed_proposals, new_article_plan, len(published), notion_pages, release_summary)
 
 
@@ -610,85 +597,142 @@ def format_proposal_message(proposals, new_article_plan, total_articles, notion_
         return "\n".join(parts)
 
     parts.append("\n---")
-    parts.append("Reply with *yes, proceed with all changes* to apply everything.")
-    parts.append("Or specify which changes to apply (e.g., *only update articles 1 and 3* or *skip the new article*).")
+    parts.append("You can ask me to revise the proposal, or reply *yes, proceed* to apply the changes.")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Skill handler: revise KB proposal based on user feedback
+# ---------------------------------------------------------------------------
+
+def handle_kb_revision(thread_context, revision_request, call_llm_fn):
+    """
+    Revise a KB update proposal based on user feedback.
+    Uses the full thread context to understand the original proposal and corrections.
+    Returns an updated Slack mrkdwn proposal.
+    """
+    revision_prompt = """You are revising a knowledge base update proposal based on user feedback.
+
+You have the full Slack thread with the original proposal and the user's corrections. Generate a REVISED proposal that incorporates ALL of the user's feedback.
+
+IMPORTANT:
+- Read the full thread carefully to understand what was originally proposed.
+- Apply ALL corrections the user asked for. Do not ignore any feedback.
+- Keep the same format as the original proposal (article titles, Before/After blocks, etc.)
+- If the user asked to remove a change, remove it entirely.
+- If the user corrected factual details, apply those corrections to the Before/After text.
+- Show the full revised proposal, not just what changed.
+
+WRITING STYLE for any new/edited text (must match existing Fourwaves help center articles):
+- Short, straight-to-the-point sentences. No filler or marketing language.
+- Use bullet lists or numbered lists whenever possible instead of paragraphs.
+- Step-by-step instructions for how-to content (1. Go to... 2. Click... 3. Select...).
+- Speak directly to the user ("You can...", "Click...", "Go to...").
+- Keep the tone helpful and professional, not casual or overly friendly.
+
+OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
+- Use single * for bold (*bold*). NEVER use ** or ## or ### or markdown headers.
+- Use ``` for code blocks (triple backtick) for Before/After text blocks.
+- Number each change (1. 2. 3.)
+- For each change use: *[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
+  Why: one sentence
+  ```Before: ...``` and ```After: ...```
+
+End with:
+---
+You can ask me to revise again, or reply *yes, proceed* to apply the changes."""
+
+    response = call_llm_fn(
+        revision_prompt,
+        f"Full thread conversation:\n{thread_context}\n\nUser's latest revision request:\n{revision_request}",
+        model_hint="pro",
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
 # Skill handler: execute approved changes
 # ---------------------------------------------------------------------------
 
-def execute_approved_changes(original_query, approval_text, classification, thread_context, call_llm_fn):
+def execute_approved_changes(original_query, approval_text, thread_context, call_llm_fn):
     """
     Phase 2: Apply the approved changes to Intercom.
+    Uses thread context to understand what to apply (no dependency on pending_changes.json).
     Returns a Slack mrkdwn summary of what was done.
     """
-    # Load pending changes
-    if not os.path.exists(CHANGES_CACHE_FILE):
-        return "I can't find the pending changes. Please start over by posting the Notion links again."
+    # Use LLM to extract the final approved changes from the thread
+    extract_prompt = """You are reading a Slack thread where a KB update was proposed, possibly revised, and then approved.
 
-    with open(CHANGES_CACHE_FILE, "r") as f:
-        pending = json.load(f)
-
-    article_updates = pending.get("article_updates", [])
-    new_article_plan = pending.get("new_article", None)
-    release_summary = pending.get("release_summary", "")
-
-    # Determine which changes to apply
-    apply_updates = []
-    apply_new_article = False
-
-    if classification == "approve_all":
-        apply_updates = list(range(len(article_updates)))
-        apply_new_article = new_article_plan is not None
-    else:
-        # Partial approval — use LLM to figure out which ones
-        filter_prompt = """The user partially approved a set of proposed knowledge base changes.
-Given the original proposals and the user's response, determine which changes to apply.
+Extract the FINAL version of the changes to apply. Look at the MOST RECENT proposal in the thread (the user may have asked for revisions — use the last revised version, not the original).
 
 Return a JSON object:
 {
-  "update_indices": [0, 2],  // 0-based indices of article updates to apply
-  "create_new_article": true/false
-}"""
-        proposals_summary = "\n".join(
-            f"{i}. {p['article_title']}" for i, p in enumerate(article_updates)
-        )
-        if new_article_plan:
-            proposals_summary += f"\n{len(article_updates)}. NEW ARTICLE: {new_article_plan.get('title', '')}"
+  "article_updates": [
+    {
+      "article_title": "...",
+      "article_url": "...",
+      "changes_description": "full description of all changes to make to this article"
+    }
+  ],
+  "new_article": null or {
+    "title": "...",
+    "description": "...",
+    "outline": "..."
+  }
+}
 
-        raw = call_llm_fn(
-            filter_prompt,
-            f"Proposals:\n{proposals_summary}\n\nUser's response: {approval_text}",
-            model_hint="flash",
-        )
+If the user's approval message specifies only certain changes to apply (e.g., "only article 1"), include only those.
+Return ONLY the JSON object, nothing else."""
 
-        try:
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-            parsed = json.loads(cleaned)
-            apply_updates = parsed.get("update_indices", [])
-            apply_new_article = parsed.get("create_new_article", False)
-        except (json.JSONDecodeError, AttributeError):
-            return "I couldn't understand which changes to apply. Please be more specific (e.g., 'only articles 1 and 3')."
+    raw = call_llm_fn(
+        extract_prompt,
+        f"Thread conversation:\n{thread_context}\n\nApproval message:\n{approval_text}",
+        model_hint="pro",
+    )
+
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+        pending = json.loads(cleaned)
+    except (json.JSONDecodeError, AttributeError):
+        return "I couldn't parse the changes from our conversation. Could you clarify which changes to apply?"
+
+    article_updates = pending.get("article_updates", [])
+    new_article_plan = pending.get("new_article", None)
 
     results = []
 
-    # Apply article updates
-    for idx in apply_updates:
-        if idx >= len(article_updates):
-            continue
-        update = article_updates[idx]
-        article_id = update["article_id"]
-        article_title = update["article_title"]
-        changes_description = update["changes"]
+    # Fetch all articles to resolve titles to IDs
+    all_articles = fetch_all_intercom_articles()
+    articles_by_title = {}
+    for a in all_articles:
+        articles_by_title[a.get("title", "").lower()] = a
 
+    # Apply article updates
+    for update in article_updates:
+        article_title = update.get("article_title", "")
+        article_url = update.get("article_url", "")
+        changes_description = update.get("changes_description", "")
+
+        # Find article by title (case-insensitive)
+        article = articles_by_title.get(article_title.lower())
+        if not article:
+            # Try partial match
+            for title, a in articles_by_title.items():
+                if article_title.lower() in title or title in article_title.lower():
+                    article = a
+                    break
+
+        if not article:
+            results.append(f"SKIPPED: *{article_title}* — could not find article in Intercom")
+            continue
+
+        article_id = article["id"]
         log.info(f"Updating article {article_id}: {article_title}")
 
         try:
@@ -721,7 +765,6 @@ RULES:
 
             user_prompt = (
                 f"CHANGES TO APPLY:\n{changes_description}\n\n"
-                f"RELEASE CONTEXT:\n{release_summary[:1000]}\n\n"
                 f"CURRENT TITLE: {current_title}\n"
                 f"CURRENT DESCRIPTION: {current_description}\n"
                 f"CURRENT HTML BODY:\n{current_body}"
@@ -738,14 +781,15 @@ RULES:
 
             # Apply the update
             update_intercom_article(article_id, body=new_body)
-            results.append(f"Updated: *{article_title}*\n   {update.get('article_url', '')}")
+            url = article.get("url", article_url)
+            results.append(f"Updated: *{article_title}*\n   {url}")
 
         except Exception as e:
             log.error(f"Failed to update article {article_id}: {e}")
             results.append(f"FAILED: *{article_title}* — {e}")
 
     # Create new article
-    if apply_new_article and new_article_plan:
+    if new_article_plan:
         log.info(f"Creating new article: {new_article_plan.get('title', '?')}")
         try:
             create_prompt = """Create a help center article in HTML format based on this outline.
@@ -775,8 +819,7 @@ CONTENT RULES:
             outline = (
                 f"Title: {new_article_plan.get('title', '')}\n"
                 f"Description: {new_article_plan.get('description', '')}\n"
-                f"Outline: {new_article_plan.get('outline', '')}\n\n"
-                f"Release context:\n{release_summary[:2000]}"
+                f"Outline: {new_article_plan.get('outline', '')}"
             )
 
             body_html = call_llm_fn(create_prompt, outline, model_hint="pro")
@@ -799,12 +842,6 @@ CONTENT RULES:
         except Exception as e:
             log.error(f"Failed to create new article: {e}")
             results.append(f"FAILED to create new article: {e}")
-
-    # Clean up
-    try:
-        os.remove(CHANGES_CACHE_FILE)
-    except OSError:
-        pass
 
     # Format response
     if not results:

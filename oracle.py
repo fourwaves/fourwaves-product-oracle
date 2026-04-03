@@ -192,20 +192,22 @@ Reply with ONLY the skill name or "none". Nothing else."""
     return result.strip().lower().split()[0]  # Take first word only
 
 
-def classify_followup(thread_context, followup_text):
-    """Determine if a follow-up is an approval, a correction, or a new request."""
-    system_prompt = """You are evaluating a follow-up message in a Slack thread where the bot proposed knowledge base changes.
+def classify_followup(thread_context, followup_text, skill):
+    """Classify a follow-up message in a thread. Works for any skill."""
+    system_prompt = f"""You are evaluating a follow-up message in a Slack thread where the bot previously responded. The thread skill is: {skill}.
 
 Classify the follow-up into one of:
-- "approve_all" — The user approves all proposed changes (e.g., "yes proceed", "go ahead", "looks good, do it")
-- "approve_partial" — The user approves only some changes or gives specific instructions (e.g., "only update article X", "skip the new article", "proceed with 1 and 3 only")
-- "reject" — The user rejects the changes (e.g., "no don't do that", "cancel", "let me rethink")
-- "question" — The user is asking a clarifying question (e.g., "what about article Y?", "can you show me the full content?")
+- "approve" — The user explicitly approves and wants the bot to execute/apply changes (e.g., "yes proceed", "go ahead", "looks good apply it", "ok I'm satisfied now apply those updates", "create the drafts")
+- "revise" — The user wants the bot to adjust, correct, or refine its previous response (e.g., "actually change X to Y", "remove the part about Z", "make those adjustments and show me again", feedback with corrections)
+- "reject" — The user explicitly cancels (e.g., "cancel", "nevermind", "stop")
+- "followup" — The user is asking a follow-up question, requesting additional action, or continuing the conversation in any other way (e.g., "tell me more about X", "can you also draft an email", "what about Y?")
 
-Reply with ONLY one of: approve_all, approve_partial, reject, question"""
+IMPORTANT: "revise" means the user is giving feedback on the bot's previous response and wants a corrected version. "followup" means the user is asking something new or additional. "approve" ONLY when the user explicitly says to proceed with execution.
+
+Reply with ONLY one of: approve, revise, reject, followup"""
 
     result = call_llm(system_prompt, f"Thread so far:\n{thread_context}\n\nFollow-up message:\n{followup_text}", model_hint="flash")
-    return result.strip().lower()
+    return result.strip().lower().split()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -341,10 +343,9 @@ def run_slack_poll():
             continue
 
         log.info(f"  Skill '{skill}' response posted ({len(response)} chars).")
-        # kb_update needs approval; insights is answered immediately
-        status = "awaiting_approval" if skill == "kb_update" else "answered"
+        # All threads start as "active" — the bot will keep monitoring for follow-ups
         processed[ts] = {
-            "status": status,
+            "status": "active",
             "skill": skill,
             "query": text[:500],
             "response_length": len(response),
@@ -358,7 +359,7 @@ def run_slack_poll():
     now = datetime.now()
     active_threads = []
     for thread_ts, entry in processed.items():
-        if entry.get("status") not in ("awaiting_approval", "answered"):
+        if entry.get("status") not in ("active", "awaiting_approval", "answered"):
             continue
         if ":" in thread_ts:
             continue
@@ -425,44 +426,62 @@ def run_slack_poll():
                 pass
 
             skill = entry.get("skill", "")
+            classification = classify_followup(thread_context, followup_text, skill)
+            log.info(f"  Follow-up classified as: {classification} (skill: {skill})")
 
             try:
-                if skill == "insights":
-                    # Insights: handle follow-up (context answer or new scan)
-                    from skills.insights import handle_insights_followup
-                    response = handle_insights_followup(thread_context, followup_text, call_llm)
-                    classification = "insights_followup"
+                if classification.startswith("reject"):
+                    response = "Got it, cancelled. Let me know if you'd like to start over."
+                    processed[thread_ts]["status"] = "rejected"
 
-                elif skill == "kb_update":
-                    # KB update: classify as approval/rejection/question
-                    classification = classify_followup(thread_context, followup_text)
-
-                    if classification.startswith("approve"):
-                        log.info(f"  Approval detected ({classification}), executing changes...")
+                elif classification.startswith("approve"):
+                    if skill == "kb_update":
+                        log.info(f"  Approval detected, executing KB changes...")
                         from skills.kb_update import execute_approved_changes
                         response = execute_approved_changes(
                             entry.get("query", ""),
                             followup_text,
-                            classification,
                             thread_context,
                             call_llm,
                         )
                         processed[thread_ts]["status"] = "completed"
+                    else:
+                        # For non-actionable skills, treat approve as a followup
+                        response = call_llm(
+                            """You are the Fourwaves Oracle. The user approved or confirmed something. Respond helpfully.
+Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
+                            f"Thread:\n{thread_context}\n\nMessage:\n{followup_text}",
+                            model_hint="pro",
+                        )
 
-                    elif classification.startswith("reject"):
-                        response = "Got it, changes cancelled. Let me know if you'd like to try again with different instructions."
-                        processed[thread_ts]["status"] = "rejected"
-
+                elif classification.startswith("revise"):
+                    if skill == "kb_update":
+                        from skills.kb_update import handle_kb_revision
+                        response = handle_kb_revision(thread_context, followup_text, call_llm)
+                        # Keep status as active — user is still iterating
+                        processed[thread_ts]["status"] = "active"
+                    elif skill == "insights":
+                        from skills.insights import handle_insights_followup
+                        response = handle_insights_followup(thread_context, followup_text, call_llm)
                     else:
                         response = call_llm(
-                            """You are the Fourwaves Oracle. Answer the user's follow-up question based on the thread context.
+                            """You are the Fourwaves Oracle. Revise your previous response based on the user's feedback.
+Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
+                            f"Thread:\n{thread_context}\n\nRevision request:\n{followup_text}",
+                            model_hint="pro",
+                        )
+
+                else:  # "followup" or anything else
+                    if skill == "insights":
+                        from skills.insights import handle_insights_followup
+                        response = handle_insights_followup(thread_context, followup_text, call_llm)
+                    else:
+                        response = call_llm(
+                            """You are the Fourwaves Oracle. Answer the user's follow-up based on the thread context.
 Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
                             f"Thread:\n{thread_context}\n\nFollow-up:\n{followup_text}",
                             model_hint="pro",
                         )
-                else:
-                    classification = "unknown"
-                    response = "I'm not sure how to handle this follow-up."
 
             except Exception as e:
                 log.error(f"  Follow-up processing failed: {e}")
@@ -481,6 +500,8 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
                 "text": followup_text[:200],
                 "date": now.isoformat(),
             }
+            # Keep the parent thread's date fresh so it stays in the active window
+            processed[thread_ts]["date"] = now.isoformat()
             save_processed_messages(processed)
 
     # Advance poll timestamp, but not past any errored messages (so they get retried)
