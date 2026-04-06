@@ -33,7 +33,7 @@ NOTION_HEADERS = {
 VALID_SOURCES = {"Intercom", "Survey", "Offboarding", "Email", "Call Transcript"}
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_insights_cache.json")
-CACHE_TTL_MINUTES = 60
+CACHE_TTL_MINUTES = 1440
 
 RELEVANCE_BATCH_SIZE = 30
 MAX_PARALLEL_BATCHES = 5
@@ -85,7 +85,6 @@ def fetch_insights_from_notion():
     filter_obj = {
         "and": [
             {"property": "Not an insight", "select": {"does_not_equal": "TRUE"}},
-            {"property": "Test data", "select": {"does_not_equal": "TRUE"}},
         ]
     }
 
