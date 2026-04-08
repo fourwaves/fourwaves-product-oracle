@@ -61,5 +61,25 @@
     "thread_ts": "1775159686.448289",
     "text": "yes proceed",
     "date": "2026-04-03T15:24:06.150771"
+  },
+  "1775668303.842829": {
+    "status": "active",
+    "skill": "insights",
+    "query": "get me all the feedback and comments you can find on OpenConf saas, by category. (our competitor)",
+    "response_length": 24927,
+    "date": "2026-04-08T17:58:48.524859"
+  },
+  "1775519050.336069": {
+    "status": "active",
+    "skill": "insights",
+    "query": "get me all the user insights that talk about confusion regarding the status of their submission. Mostly presenters",
+    "response_length": 42742,
+    "date": "2026-04-08T17:58:48.524383"
+  },
+  "1775668303.842829:1775671041.821149": {
+    "status": "followup_followup",
+    "thread_ts": "1775668303.842829",
+    "text": "<@U09QP6A9UTT> :open_mouth:",
+    "date": "2026-04-08T17:58:48.524859"
   }
 }
