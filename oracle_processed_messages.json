@@ -67,7 +67,7 @@
     "skill": "insights",
     "query": "get me all the feedback and comments you can find on OpenConf saas, by category. (our competitor)",
     "response_length": 24927,
-    "date": "2026-04-08T18:14:07.834313"
+    "date": "2026-04-08T18:45:12.511218"
   },
   "1775519050.336069": {
     "status": "active",
@@ -87,5 +87,11 @@
     "thread_ts": "1775668303.842829",
     "text": "Yes, I would like to know the main differentiators between Fourwaves and OpenConf.",
     "date": "2026-04-08T18:14:07.834313"
+  },
+  "1775668303.842829:1775672795.549849": {
+    "status": "followup_followup",
+    "thread_ts": "1775668303.842829",
+    "text": "Are you able to scan all the call trancripts and find what are the summary of the reasons why someone would choose fourwaves and not choose OpenConf ?",
+    "date": "2026-04-08T18:45:12.511218"
   }
 }
