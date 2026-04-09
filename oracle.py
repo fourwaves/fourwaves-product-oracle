@@ -191,8 +191,9 @@ def post_long_message(channel, text, thread_ts):
 # ---------------------------------------------------------------------------
 
 SKILL_DESCRIPTIONS = """Available skills:
-- insights: Answer product questions using the Fourwaves user insights database. Triggered for any question about user feedback, feature requests, pain points, or product topics.
-- kb_update: Update the Intercom knowledge base (help center articles) based on Notion product release pages. Triggered when the user provides Notion page URLs describing new features or product updates.
+- transcripts: Search through full call transcripts (sales calls, support calls, demos, onboarding, feedback sessions). Triggered when the user explicitly mentions "call transcripts", "transcripts", "calls", or wants to search through what was said in actual calls/meetings.
+- insights: Answer product questions using the Fourwaves user insights database. Triggered when the user mentions "user insights", "insights", or asks about user feedback, feature requests, pain points, or product topics WITHOUT mentioning call transcripts.
+- kb_update: Update the Intercom knowledge base (help center articles) based on Notion product release pages. Triggered when the user mentions updating the knowledge base, help center, or provides Notion page URLs describing new features or product updates.
 """
 
 
@@ -203,8 +204,9 @@ def classify_skill(text):
 {SKILL_DESCRIPTIONS}
 
 Rules:
-- If the message contains one or more Notion page URLs (notion.so or notion.site) and talks about features released, product updates, or knowledge base updates → return "kb_update"
-- If the message is a product question, asks about user feedback, feature requests, pain points, what users think, or anything related to user insights → return "insights"
+- If the message explicitly mentions "call transcript(s)", "transcripts", "calls", "what was said in calls/meetings", or wants to search through actual call recordings/transcripts → return "transcripts"
+- If the message contains one or more Notion page URLs (notion.so or notion.site) and talks about features released, product updates, or knowledge base/help center updates → return "kb_update"
+- If the message mentions "user insights", "insights", or asks about user feedback, feature requests, pain points, what users think (without specifically mentioning call transcripts) → return "insights"
 - If the message is a system notification (e.g., "X was added to the channel"), casual chat, or doesn't match any skill → return "none"
 
 Reply with ONLY the skill name or "none". Nothing else."""
@@ -342,6 +344,9 @@ def run_slack_poll():
             elif skill == "insights":
                 from skills.insights import handle_insights_query
                 response = handle_insights_query(text, call_llm)
+            elif skill == "transcripts":
+                from skills.transcripts import handle_transcript_query
+                response = handle_transcript_query(text, call_llm)
             else:
                 response = f"Skill '{skill}' is not yet implemented."
         except Exception as e:
@@ -484,6 +489,9 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
                     elif skill == "insights":
                         from skills.insights import handle_insights_followup
                         response = handle_insights_followup(thread_context, followup_text, call_llm)
+                    elif skill == "transcripts":
+                        from skills.transcripts import handle_transcript_followup
+                        response = handle_transcript_followup(thread_context, followup_text, call_llm)
                     else:
                         response = call_llm(
                             """You are the Fourwaves Oracle. Revise your previous response based on the user's feedback.
@@ -496,6 +504,9 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
                     if skill == "insights":
                         from skills.insights import handle_insights_followup
                         response = handle_insights_followup(thread_context, followup_text, call_llm)
+                    elif skill == "transcripts":
+                        from skills.transcripts import handle_transcript_followup
+                        response = handle_transcript_followup(thread_context, followup_text, call_llm)
                     else:
                         response = call_llm(
                             """You are the Fourwaves Oracle. Answer the user's follow-up based on the thread context.
