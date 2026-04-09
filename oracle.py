@@ -198,7 +198,25 @@ SKILL_DESCRIPTIONS = """Available skills:
 
 
 def classify_skill(text):
-    """Classify a Slack message into a skill name or 'none'."""
+    """Classify a Slack message into a skill name or 'none'.
+
+    Uses keyword pre-checks for unambiguous signals before falling back to LLM.
+    """
+    text_lower = text.lower()
+
+    # Keyword pre-checks — deterministic routing for clear-cut cases
+    transcript_keywords = ["call transcript", "call transcripts", "transcripts", "in calls", "in the calls", "in meetings", "said in calls"]
+    if any(kw in text_lower for kw in transcript_keywords):
+        log.info("  Keyword pre-check → transcripts")
+        return "transcripts"
+
+    if ("notion.so/" in text_lower or "notion.site/" in text_lower) and any(
+        kw in text_lower for kw in ["knowledge base", "help center", "kb", "article"]
+    ):
+        log.info("  Keyword pre-check → kb_update")
+        return "kb_update"
+
+    # Fall back to LLM for ambiguous messages
     system_prompt = f"""You route Slack messages to the correct skill handler.
 
 {SKILL_DESCRIPTIONS}
