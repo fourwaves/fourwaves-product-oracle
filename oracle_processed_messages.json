@@ -100,5 +100,12 @@
     "query": "Find all user insights related to scheduling or automating email sending.\nFocus on cases where:\n\u2022 The recipient list can change between setup and send time\n\u2022 Users expect the list to update automatically (e.g. new registrations, status changes)\n\u2022 Users faced issues with outdated or static recipient lists\nFor each insight, extract:\n\u2022 Context\n\u2022 Problem / need\n\u2022 Whether timing or data changes caused the issue\nSummarize:\n\u2022 Key patterns\n\u2022 Frequency of the need\n\u2022 Impact on users\n\u2022 Conclusion: Do we ne",
     "response_length": 31826,
     "date": "2026-04-09T19:48:08.906581"
+  },
+  "1775766385.702099": {
+    "status": "active",
+    "skill": "transcripts",
+    "query": "Give me everything mentioned in the call transcripts about Oxford Abstracts.",
+    "response_length": 4048,
+    "date": "2026-04-09T23:02:09.716229"
   }
 }
