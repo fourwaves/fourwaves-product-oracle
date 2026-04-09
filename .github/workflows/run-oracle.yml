@@ -31,6 +31,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           ORACLE_CHANNEL_ID: ${{ secrets.ORACLE_CHANNEL_ID }}
           INTERCOM_TOKEN: ${{ secrets.INTERCOM_TOKEN }}
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
         run: python oracle.py --slack-poll
 
       - name: Commit processed messages log
