@@ -107,5 +107,12 @@
     "query": "Give me everything mentioned in the call transcripts about Oxford Abstracts.",
     "response_length": 4048,
     "date": "2026-04-09T23:02:09.716229"
+  },
+  "1775822316.075029": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Find user insights talking about the flag \u201cNot registered\u201d for submissions. Some don\u2019t know what it refers to specifically. Others want it to flag submissions only when ALL authors or ALL presenters are not registered, not just when there\u2019s at least one. Others might have other questions about this flag.",
+    "response_length": 17684,
+    "date": "2026-04-10T12:24:50.422150"
   }
 }
