@@ -105,7 +105,7 @@ def slack_get_channel_messages(channel, oldest=None, limit=20):
     kwargs = {"channel": channel, "limit": limit}
     if oldest:
         kwargs["oldest"] = oldest
-    return slack_api("conversations.history", **kwargs)
+    return slack_api("conversations.history", http_method="GET", **kwargs)
 
 
 def slack_get_thread_replies(channel, ts, limit=100):
