@@ -30,7 +30,7 @@ NOTION_HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
-VALID_SOURCES = {"Intercom", "Survey", "Offboarding", "Email", "Call Transcript"}
+VALID_SOURCES = {"Intercom", "Survey", "Offboarding", "Email", "CSV Import", "Other"}
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_insights_cache.json")
 CACHE_TTL_MINUTES = 1440
