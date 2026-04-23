@@ -23,6 +23,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+from . import embeddings as emb_helper
+
 log = logging.getLogger("oracle.transcripts")
 
 # ---------------------------------------------------------------------------
@@ -53,13 +55,20 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 # Cache
 TRANSCRIPT_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "transcript_cache")
 METADATA_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_transcripts_meta_cache.json")
+EMBEDDINGS_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_transcripts_embeddings.json")
 METADATA_CACHE_TTL_MINUTES = 360  # 6 hours for the Notion metadata
 # Individual transcript texts are cached indefinitely (they don't change)
 
 # LLM batching
 CHUNK_SIZE_CHARS = 8000  # Split transcripts into chunks of this size
-RELEVANCE_BATCH_SIZE = 15  # Number of chunks per LLM scoring batch
-MAX_PARALLEL_BATCHES = 5
+# Batch size for LLM chunk relevance scoring. 2.5-flash handles 40 chunks per call
+# comfortably (each chunk previewed at 2000 chars => ~80k input tokens). Previously 15.
+RELEVANCE_BATCH_SIZE = 40
+MAX_PARALLEL_BATCHES = 3
+
+# Embedding-based chunk shortlist: narrow to top-N chunks most similar to the
+# query before LLM scoring. Tuned to keep generous recall while cutting calls.
+SHORTLIST_TOP_N = 200
 
 # Will be set by the router
 _call_llm = None
@@ -590,6 +599,22 @@ Synthesize into a comprehensive response."""
 # Skill entry points
 # ---------------------------------------------------------------------------
 
+def _chunk_id(chunk):
+    """Stable id for a chunk: derived from doc_id + hash of the text.
+
+    Chunks are regenerated every run from cached transcript text, but the text
+    is deterministic, so the same chunk produces the same id across runs.
+    """
+    h = hashlib.md5(chunk["text"].encode("utf-8")).hexdigest()[:12]
+    return f"{chunk['doc_id']}:{h}"
+
+
+def _chunk_text_for_embedding(chunk):
+    # Chunks already carry rich context (meta header + content). Cap at 4k chars
+    # for embedding — the signal is in the first portion.
+    return chunk["text"][:4000]
+
+
 def handle_transcript_query(message_text, call_llm_fn):
     """Handle a question by scanning all call transcripts."""
     set_llm(call_llm_fn)
@@ -612,17 +637,28 @@ def handle_transcript_query(message_text, call_llm_fn):
     if not all_chunks:
         return "No call transcripts found in the database, or none could be loaded."
 
-    # Step 4: Score relevance
-    relevant = batch_score_chunks(message_text, all_chunks)
+    # Step 4: Embedding shortlist — narrow to top-N chunks most similar to query
+    shortlist = emb_helper.shortlist_by_similarity(
+        query=message_text,
+        items=all_chunks,
+        get_id=_chunk_id,
+        get_text=_chunk_text_for_embedding,
+        cache_path=EMBEDDINGS_CACHE_FILE,
+        top_n=SHORTLIST_TOP_N,
+    )
+
+    # Step 5: LLM relevance scoring on shortlisted chunks only
+    relevant = batch_score_chunks(message_text, shortlist)
 
     if not relevant:
         return (
-            f"I scanned all {len(transcripts)} call transcripts "
-            f"({len(all_chunks)} chunks) but couldn't find any content matching your query. "
+            f"I scanned {len(transcripts)} call transcripts "
+            f"({len(all_chunks)} chunks, shortlisted {len(shortlist)} via semantic similarity) "
+            f"but couldn't find any content matching your query. "
             f"Try rephrasing or broadening your search?"
         )
 
-    # Step 5: Synthesize response
+    # Step 6: Synthesize response
     response = synthesize_transcript_response(
         message_text, relevant, len(all_chunks), len(transcripts)
     )

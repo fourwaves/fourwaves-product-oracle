@@ -193,29 +193,53 @@ def save_processed_messages(processed):
         json.dump(processed, f, indent=2)
 
 
-FALLBACK_ACKS = [
+ACK_MESSAGES = [
     ":crystal_ball: Consulting the oracle... hold tight!",
-    ":mag: Digging through the archives... be right back.",
-    ":hourglass_flowing_sand: Processing your question — this may take a moment.",
+    ":mag: Digging through the archives — be right back.",
+    ":hourglass_flowing_sand: Processing your question... this may take a moment.",
     ":robot_face: Beep boop, on it!",
-    ":brain: Thinking really hard... give me a sec.",
+    ":brain: Thinking really hard, give me a sec.",
     ":books: Summoning the user insights, one moment...",
     ":telescope: Scanning the feedback universe for answers...",
+    ":crystal_ball: The oracle awakens. Answers incoming...",
+    ":zap: Firing up the neurons — stand by.",
+    ":mag_right: Spelunking through thousands of insights...",
+    ":detective: On the case. Be right back with findings.",
+    ":owl: Consulting the wise council of user feedback...",
+    ":abacus: Crunching the numbers, weighing the signals...",
+    ":hammer_and_wrench: Assembling your answer from scratch...",
+    ":rocket: Hold my coffee, I'm deep in thought.",
+    ":coffee: One oracle-grade answer, brewing...",
+    ":gem: Mining for gems in the insight database...",
+    ":bulb: A lightbulb moment is loading...",
+    ":dart: Zeroing in on exactly what you need...",
+    ":compass: Navigating through the user feedback ocean...",
+    ":bee: Busy bee at work — answer coming in hot.",
+    ":microscope: Examining every insight under the microscope...",
+    ":speech_balloon: Gathering what the users actually said...",
+    ":dragon: The oracle stirs from slumber. Patience, mortal.",
+    ":tornado: Spinning up an analysis whirlwind...",
+    ":jigsaw: Fitting the puzzle pieces together...",
+    ":sparkles: Adding a sprinkle of magic to your answer...",
+    ":card_index_dividers: Sorting through the filing cabinet of user feedback...",
+    ":test_tube: Running this one through the lab...",
+    ":ocean: Diving deep into the sea of insights...",
+    ":chart_with_upwards_trend: Crunching patterns and trends...",
+    ":thought_balloon: Let me think about this properly...",
+    ":pick: Chipping away at your question...",
+    ":bookmark_tabs: Flipping through the feedback book...",
+    ":fire: Firing up the answer engine...",
+    ":satellite: Pinging the insight database. Stand by.",
+    ":gear: Cranking the gears, sparks flying.",
+    ":factory: Manufacturing your answer on the assembly line...",
+    ":dna: Sequencing the DNA of user feedback...",
+    ":spiral_note_pad: Taking notes, drafting an answer...",
 ]
 
 
 def generate_processing_message():
-    """Return a funny ack. Falls back to a hardcoded message if the LLM is unavailable."""
-    system_prompt = """Generate a funny, creative message telling the user their question is being processed.
-Use emojis. Make it 1-3 sentences. Be creative and different each time.
-Output ONLY the message, nothing else."""
-    seed = f"Seed: {datetime.now().isoformat()} {random.randint(1, 99999)}"
-    try:
-        # Cheap + fast — don't burn too many retries on an ack
-        return call_llm(system_prompt, seed, model_hint="flash", max_attempts=2)
-    except Exception as e:
-        log.warning(f"  Ack LLM failed, using fallback: {e}")
-        return random.choice(FALLBACK_ACKS)
+    """Return a hardcoded funny ack. Deterministic — no LLM call, no failure mode."""
+    return random.choice(ACK_MESSAGES)
 
 
 def split_response(text, max_len=39000):

@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+from . import embeddings as emb_helper
+
 log = logging.getLogger("oracle.insights")
 
 # ---------------------------------------------------------------------------
@@ -33,13 +35,19 @@ NOTION_HEADERS = {
 VALID_SOURCES = {"Intercom", "Survey", "Offboarding", "Email", "CSV Import", "Other"}
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_insights_cache.json")
+EMBEDDINGS_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_insights_embeddings.json")
 CACHE_TTL_MINUTES = 1440
 
-RELEVANCE_BATCH_SIZE = 30
-# Keep parallelism conservative. Gemini 2.0 Flash paid tier allows lots of RPM,
-# but bursting 93 batches at once can still trip per-minute limits. call_llm
-# already retries with exponential backoff on 429, so this is belt-and-suspenders.
+# Batch size for LLM relevance scoring. 2.5-flash handles 80 insights per call easily
+# (input ~16k tokens, output ~100 tokens). Previously 30 — bumping cuts call count ~2.7x.
+RELEVANCE_BATCH_SIZE = 80
 MAX_PARALLEL_BATCHES = 3
+
+# Embedding-based shortlist: narrow the corpus to the top-N most semantically
+# similar insights before LLM scoring. With ~2.8k total insights, top 400 keeps
+# generous recall (tuned via scripts/eval_shortlist.py) while cutting scoring
+# calls ~7x.
+SHORTLIST_TOP_N = 400
 
 # Will be set by the router when calling skill functions
 _call_llm = None
@@ -338,17 +346,54 @@ Generate a comprehensive response addressing the query using ALL the insights ab
 # Skill entry points
 # ---------------------------------------------------------------------------
 
+def _insight_id(ins):
+    return ins["id"]
+
+
+def _insight_text_for_embedding(ins):
+    """Concatenate the fields that carry semantic signal for shortlist."""
+    parts = [
+        ins.get("title", ""),
+        ins.get("short_description", ""),
+        ins.get("long_description", ""),
+        ins.get("follow_up_feedback", ""),
+    ]
+    return " ".join(p for p in parts if p)[:3000]
+
+
 def handle_insights_query(message_text, call_llm_fn):
-    """Handle a product question by scanning all insights."""
+    """Handle a product question by scanning all insights.
+
+    Pipeline:
+      1. Load all insights (cached from Notion).
+      2. Embedding shortlist: narrow to top-N most semantically similar.
+      3. LLM relevance scoring on the shortlist (batched).
+      4. Synthesis on the relevant subset.
+    """
     set_llm(call_llm_fn)
 
     insights = load_cached_insights()
     log.info(f"Scanning {len(insights)} insights for: {message_text[:100]}")
 
-    relevant = batch_score_relevance(message_text, insights)
+    # Step 1: Embedding shortlist (cheap, ~7x fewer LLM calls downstream)
+    shortlist = emb_helper.shortlist_by_similarity(
+        query=message_text,
+        items=insights,
+        get_id=_insight_id,
+        get_text=_insight_text_for_embedding,
+        cache_path=EMBEDDINGS_CACHE_FILE,
+        top_n=SHORTLIST_TOP_N,
+    )
+
+    # Step 2: LLM relevance scoring on shortlisted items only
+    relevant = batch_score_relevance(message_text, shortlist)
 
     if not relevant:
-        return f"I scanned all {len(insights)} user insights but couldn't find any that match your query. Try rephrasing?"
+        return (
+            f"I scanned {len(insights)} user insights "
+            f"(shortlisted {len(shortlist)} via semantic similarity) "
+            f"but couldn't find any that match your query. Try rephrasing?"
+        )
 
     response = synthesize_response(message_text, relevant, len(insights))
     return response
