@@ -36,7 +36,10 @@ CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "oracle_in
 CACHE_TTL_MINUTES = 1440
 
 RELEVANCE_BATCH_SIZE = 30
-MAX_PARALLEL_BATCHES = 5
+# Keep parallelism conservative. Gemini 2.0 Flash paid tier allows lots of RPM,
+# but bursting 93 batches at once can still trip per-minute limits. call_llm
+# already retries with exponential backoff on 429, so this is belt-and-suspenders.
+MAX_PARALLEL_BATCHES = 3
 
 # Will be set by the router when calling skill functions
 _call_llm = None

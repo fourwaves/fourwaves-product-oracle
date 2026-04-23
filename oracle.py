@@ -48,20 +48,65 @@ except (ImportError, Exception):
     HAS_GEMINI_SDK = False
 
 
-def call_llm(system_prompt, user_prompt, model_hint="flash"):
-    """Call LLM. model_hint: 'flash' for fast tasks, 'pro' for synthesis."""
+def _extract_quota_details(exc):
+    """Pull quotaId and details out of a Gemini 429 for diagnostic logging."""
+    try:
+        # google.genai raises errors.ClientError with .details (dict)
+        details = getattr(exc, "details", None) or {}
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except Exception:
+                return str(details)[:500]
+        err = details.get("error", {}) if isinstance(details, dict) else {}
+        violations = []
+        for d in err.get("details", []) or []:
+            if d.get("@type", "").endswith("QuotaFailure"):
+                for v in d.get("violations", []) or []:
+                    violations.append(v.get("quotaId") or v.get("quotaMetric") or str(v))
+        if violations:
+            return "quotas=" + ",".join(violations)
+        return str(details)[:500]
+    except Exception:
+        return "<no details>"
+
+
+def call_llm(system_prompt, user_prompt, model_hint="flash", max_attempts=4):
+    """Call LLM with exponential backoff on 429/transient errors.
+
+    model_hint: 'flash' for fast tasks, 'pro' for synthesis.
+    Retries 429 RESOURCE_EXHAUSTED with backoff 2s, 4s, 8s.
+    """
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not (HAS_GEMINI_SDK and gemini_key):
+        raise RuntimeError("No LLM backend available. Set GEMINI_API_KEY.")
 
-    if HAS_GEMINI_SDK and gemini_key:
-        client = genai.Client(api_key=gemini_key)
-        model = "gemini-2.0-flash" if model_hint == "flash" else "gemini-2.5-flash"
-        resp = client.models.generate_content(
-            model=model,
-            contents=f"{system_prompt}\n\n{user_prompt}",
-        )
-        return resp.text.strip()
+    client = genai.Client(api_key=gemini_key)
+    model = "gemini-2.0-flash" if model_hint == "flash" else "gemini-2.5-flash"
 
-    raise RuntimeError("No LLM backend available. Set GEMINI_API_KEY.")
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=f"{system_prompt}\n\n{user_prompt}",
+            )
+            return resp.text.strip()
+        except Exception as e:
+            last_exc = e
+            msg = str(e)
+            is_429 = "429" in msg or "RESOURCE_EXHAUSTED" in msg
+            is_503 = "503" in msg or "UNAVAILABLE" in msg
+            if not (is_429 or is_503) or attempt == max_attempts:
+                if is_429:
+                    log.error(f"  LLM 429 after {attempt} attempt(s). {_extract_quota_details(e)}")
+                raise
+            # Backoff with jitter: 2s, 4s, 8s (+/- 25%)
+            base = 2 ** attempt
+            sleep = base + random.uniform(-base * 0.25, base * 0.25)
+            log.warning(f"  LLM {'429' if is_429 else '503'} attempt {attempt}/{max_attempts}, retrying in {sleep:.1f}s... {_extract_quota_details(e) if is_429 else ''}")
+            time.sleep(sleep)
+    raise last_exc  # unreachable, but keeps type-checkers happy
 
 
 # ---------------------------------------------------------------------------
@@ -148,12 +193,29 @@ def save_processed_messages(processed):
         json.dump(processed, f, indent=2)
 
 
+FALLBACK_ACKS = [
+    ":crystal_ball: Consulting the oracle... hold tight!",
+    ":mag: Digging through the archives... be right back.",
+    ":hourglass_flowing_sand: Processing your question — this may take a moment.",
+    ":robot_face: Beep boop, on it!",
+    ":brain: Thinking really hard... give me a sec.",
+    ":books: Summoning the user insights, one moment...",
+    ":telescope: Scanning the feedback universe for answers...",
+]
+
+
 def generate_processing_message():
+    """Return a funny ack. Falls back to a hardcoded message if the LLM is unavailable."""
     system_prompt = """Generate a funny, creative message telling the user their question is being processed.
 Use emojis. Make it 1-3 sentences. Be creative and different each time.
 Output ONLY the message, nothing else."""
     seed = f"Seed: {datetime.now().isoformat()} {random.randint(1, 99999)}"
-    return call_llm(system_prompt, seed, model_hint="flash")
+    try:
+        # Cheap + fast — don't burn too many retries on an ack
+        return call_llm(system_prompt, seed, model_hint="flash", max_attempts=2)
+    except Exception as e:
+        log.warning(f"  Ack LLM failed, using fallback: {e}")
+        return random.choice(FALLBACK_ACKS)
 
 
 def split_response(text, max_len=39000):
@@ -362,7 +424,17 @@ def run_slack_poll():
             skill = classify_skill(text)
         except Exception as e:
             log.error(f"Classification failed for {ts}: {e}")
-            processed[ts] = {"status": "error", "error": str(e), "date": datetime.now().isoformat()}
+            # Tell the user instead of staying silent. Keep status=error so we retry next poll.
+            try:
+                err_msg = (
+                    ":warning: I couldn't process this question right now "
+                    "(LLM is temporarily unavailable — likely a rate limit). "
+                    "I'll automatically retry on the next poll."
+                )
+                slack_post_message(ORACLE_CHANNEL_ID, err_msg, thread_ts=ts)
+            except Exception:
+                pass
+            processed[ts] = {"status": "error", "error": str(e)[:500], "date": datetime.now().isoformat()}
             save_processed_messages(processed)
             continue
 
@@ -597,18 +669,11 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
             save_processed_messages(processed)
 
     # Advance poll timestamp based on what Slack actually returned.
-    # CRITICAL: never advance past messages we haven't seen. If Slack returned
-    # 0 messages (transient issue), keep the old timestamp so we retry next run.
-    error_timestamps = [
-        float(ts) for ts, entry in processed.items()
-        if entry.get("status") == "error" and ":" not in ts
-    ]
-    if error_timestamps:
-        # Set poll to just before the oldest error so it gets re-fetched
-        save_last_poll_ts(min(error_timestamps) - 1)
-        log.info(f"Poll timestamp set before oldest error for retry.")
-    elif messages:
-        # Advance to the latest message timestamp we actually received
+    # Errors have already been reported to the user (with retry-with-backoff
+    # inside call_llm), so we advance past them — we don't want infinite re-processing
+    # of a message that keeps erroring. If the LLM was genuinely down, the user
+    # was told and can re-ask.
+    if messages:
         latest_msg_ts = max(float(m.get("ts", 0)) for m in messages)
         save_last_poll_ts(latest_msg_ts)
         log.info(f"Poll timestamp advanced to latest message: {latest_msg_ts}")
