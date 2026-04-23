@@ -175,5 +175,12 @@
     "status": "error",
     "error": "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.', 'status': 'RESOURCE_EXHAUSTED'}}",
     "date": "2026-04-23T16:39:45.057431"
+  },
+  "1776965280.916579": {
+    "status": "active",
+    "skill": "insights",
+    "query": "what are all use cases mentioned about automating emails to reviewers in the user insights? Is it simply to contact reviewers who have pending reviews at a certain date to notify them?",
+    "response_length": 7930,
+    "date": "2026-04-23T17:49:46.416548"
   }
 }
