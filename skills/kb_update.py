@@ -75,6 +75,54 @@ def strip_code_fences(text):
     return text
 
 
+def render_changes_as_mrkdwn(changes_list):
+    """Render a list of change dicts as Slack mrkdwn, deterministically.
+
+    Each change dict has: type, section, why, before, after, screenshot_description.
+    Only 'type' is required; other fields are used when present.
+    """
+    if not changes_list:
+        return ""
+
+    parts = []
+    for i, change in enumerate(changes_list, 1):
+        type_ = str(change.get("type", "UPDATE")).upper()
+        section = change.get("section", "")
+        why = change.get("why", "")
+
+        header = f"{i}. *[{type_}]*"
+        if section:
+            header += f' — Section: "{section}"'
+        parts.append(header)
+        if why:
+            parts.append(f"Why: {why}")
+
+        if type_ == "SCREENSHOT":
+            desc = change.get("screenshot_description") or change.get("description", "")
+            if desc:
+                parts.append("")
+                parts.append(desc)
+        else:
+            before = (change.get("before") or "").strip()
+            after = (change.get("after") or "").strip()
+            if before:
+                parts.append("")
+                parts.append("*Before:*")
+                parts.append("```")
+                parts.append(before)
+                parts.append("```")
+            if after:
+                parts.append("")
+                parts.append("*After:*")
+                parts.append("```")
+                parts.append(after)
+                parts.append("```")
+
+        parts.append("")  # blank line between changes
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
 def extract_notion_urls(text):
     """Extract Notion page URLs from a Slack message."""
     # Slack wraps URLs in <url> or <url|label>
@@ -482,12 +530,12 @@ The outline should be a bullet-pointed structure of what the article should cove
 
 Given the release details and an existing help center article, determine what specific changes should be made.
 
-CRITICAL: Only propose changes that are DIRECTLY related to this article's topic. If the release affects a different feature than what this article covers, return NO_CHANGES. Do NOT propose adding content about tangentially related features.
+CRITICAL: Only propose changes that are DIRECTLY related to this article's topic. If the release affects a different feature than what this article covers, return an empty list []. Do NOT propose adding content about tangentially related features.
 
 HEADER HIERARCHY RULES (very important):
 - Look at the existing HTML headers in the article (h1, h2, h3, etc.).
 - When adding new sections, MATCH the header level used by existing same-level sections. For example, if existing top-level sections use <h2>, new top-level sections must also use <h2>.
-- If you detect INCONSISTENT header levels (e.g., some top-level sections use <h1> and others use <h2>), mention that you will also normalize headers to be consistent. The standard is: top-level sections = <h2>, sub-sections = <h3>.
+- If you detect INCONSISTENT header levels (e.g., some top-level sections use <h1> and others use <h2>), also propose a change to normalize headers. The standard is: top-level sections = <h2>, sub-sections = <h3>.
 
 WRITING STYLE for any new/edited text (must match existing articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -496,47 +544,51 @@ WRITING STYLE for any new/edited text (must match existing articles):
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
 
-If NO changes are needed for this article, return exactly: NO_CHANGES
+OUTPUT FORMAT: Return ONLY a JSON array of change objects. No prose, no markdown, no code fences around the JSON. If no changes are needed, return: []
 
-OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
-For each change, use this EXACT format, including the blank lines:
+Each change object has these fields:
+{
+  "type": "UPDATE" | "ADD" | "REMOVE" | "SCREENSHOT",
+  "section": "name of the section in the article",
+  "why": "one sentence explaining why this change is needed",
+  "before": "exact current text that will be changed (REQUIRED for UPDATE and REMOVE; omit or set to empty for ADD and SCREENSHOT)",
+  "after": "exact new text that will replace it (REQUIRED for UPDATE and ADD; omit or set to empty for REMOVE and SCREENSHOT)",
+  "screenshot_description": "what screenshot to add or update (only for SCREENSHOT type)"
+}
 
-*[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
-Why: one sentence explaining why
+RULES:
+- "before" and "after" must contain the actual prose text, NOT a description of it.
+- Plain text only inside "before" and "after" — no markdown, no code fences, no HTML tags.
+- Keep each change narrowly scoped (one paragraph or one bullet point per change).
 
-*Before:*
-```
-exact current text that will be changed
-```
-
-*After:*
-```
-exact new text that will replace it
-```
-
-For ADD changes (new content), only show the *After:* block.
-For REMOVE changes (deleted content), only show the *Before:* block.
-For SCREENSHOT changes, just describe what screenshot to add/update (no code blocks).
-
-CRITICAL FORMATTING RULES (Slack mrkdwn is fragile):
-- Triple backticks (```) MUST be on their own line — never on the same line as content, never immediately after the word "Before:" or "After:".
-- There MUST be a blank line between a closing ``` and the next *Before:*/*After:* label, AND a blank line between changes.
-- The *Before:* and *After:* labels go OUTSIDE the code block, as bold text on their own line.
-- Use single * for bold. NEVER use ** or ## or ### or markdown headers.
-- The code blocks MUST contain the actual text, not a description of it.
-- Number each change (1. 2. 3.)"""
+Example output:
+[
+  {"type": "UPDATE", "section": "Content and Formatting", "why": "Clarify which variable label value is shown on certificates.", "before": "You can insert form variables that will be automatically replaced by the corresponding form values for each registration.", "after": "You can insert form variables that will be automatically replaced by the corresponding form values for each registration. The system uses the short label value for variables."},
+  {"type": "ADD", "section": "Preview", "why": "Document the new preview step.", "after": "Click Preview to see what the certificate will look like before distributing it."}
+]"""
 
         user_prompt = f"RELEASE SUMMARY:\n{release_summary}\n\n{article_detail}"
 
         try:
-            proposal = call_llm_fn(proposal_prompt, user_prompt, model_hint="pro")
-            if "NO_CHANGES" not in proposal:
+            raw = call_llm_fn(proposal_prompt, user_prompt, model_hint="pro")
+            cleaned = strip_code_fences(raw)
+            # Tolerate legacy NO_CHANGES outputs in case the LLM reverts to the old format
+            if cleaned.strip().upper().startswith("NO_CHANGES"):
+                continue
+            changes_list = json.loads(cleaned)
+            if not isinstance(changes_list, list):
+                log.warning(f"Article {article['id']}: proposal was not a JSON list, skipping.")
+                continue
+            if changes_list:
                 detailed_proposals.append({
                     "article_id": str(article["id"]),
                     "article_title": article["title"],
                     "article_url": article.get("url", ""),
-                    "changes": proposal,
+                    "changes_list": changes_list,
+                    "changes": render_changes_as_mrkdwn(changes_list),
                 })
+        except json.JSONDecodeError as e:
+            log.warning(f"Failed to parse proposal JSON for article {article['id']}: {e}. Raw: {raw[:300]!r}")
         except Exception as e:
             log.warning(f"Failed to analyze article {article['id']}: {e}")
 
@@ -594,6 +646,31 @@ If NOT needed, return: {"needed": false}"""
     return format_proposal_message(detailed_proposals, new_article_plan, len(published), notion_pages, release_summary)
 
 
+def render_proposals_section(proposals, new_article_plan):
+    """Render the ARTICLES TO UPDATE + NEW ARTICLE sections as Slack mrkdwn."""
+    parts = []
+    if proposals:
+        parts.append(f"*ARTICLES TO UPDATE ({len(proposals)}):*\n")
+        for i, p in enumerate(proposals, 1):
+            parts.append(f"*{i}. {p['article_title']}*")
+            if p.get("article_url"):
+                parts.append(f"    {p['article_url']}")
+            parts.append(p["changes"])
+            parts.append("")
+
+    if new_article_plan:
+        parts.append("*NEW ARTICLE RECOMMENDED:*\n")
+        parts.append(f"*Title:* {new_article_plan.get('title', 'TBD')}")
+        parts.append(f"*Description:* {new_article_plan.get('description', '')}\n")
+        outline = (new_article_plan.get("outline") or "").strip()
+        if outline:
+            parts.append("```")
+            parts.append(outline)
+            parts.append("```")
+        parts.append("")
+    return "\n".join(parts)
+
+
 def format_proposal_message(proposals, new_article_plan, total_articles, notion_pages, release_summary):
     """Format the change proposal as a Slack mrkdwn message."""
     parts = []
@@ -605,22 +682,9 @@ def format_proposal_message(proposals, new_article_plan, total_articles, notion_
     feature_names = ", ".join(p["title"] for p in notion_pages)
     parts.append(f"\n_Scanned {total_articles} published help center articles for: {feature_names}_\n")
 
-    if proposals:
-        parts.append(f"*ARTICLES TO UPDATE ({len(proposals)}):*\n")
-
-        for i, p in enumerate(proposals, 1):
-            parts.append(f"*{i}. {p['article_title']}*")
-            parts.append(f"    {p['article_url']}")
-            parts.append(p["changes"])
-            parts.append("")
-
-    if new_article_plan:
-        parts.append("*NEW ARTICLE RECOMMENDED:*\n")
-        parts.append(f"*Title:* {new_article_plan.get('title', 'TBD')}")
-        parts.append(f"*Description:* {new_article_plan.get('description', '')}\n")
-        outline = new_article_plan.get("outline", "")
-        parts.append(f"```{outline}```")
-        parts.append("")
+    body = render_proposals_section(proposals, new_article_plan)
+    if body:
+        parts.append(body)
 
     if not proposals and not new_article_plan:
         parts.append("After detailed analysis, no changes are needed for any existing articles and no new article is recommended.")
@@ -650,14 +714,13 @@ You have the full Slack thread with the original proposal and the user's correct
 IMPORTANT:
 - Read the full thread carefully to understand what was originally proposed.
 - Apply ALL corrections the user asked for. Do not ignore any feedback.
-- Keep the same format as the original proposal (article titles, Before/After blocks, etc.)
-- If the user asked to remove a change, remove it entirely.
-- If the user corrected factual details, apply those corrections to the Before/After text.
-- Show the full revised proposal, not just what changed.
+- If the user asked to remove a change, remove it entirely from the output.
+- If the user corrected factual details, apply those corrections to the before/after text.
+- Show the FULL revised proposal (all articles and all changes that still apply), not just what changed.
 
 HEADER HIERARCHY RULES:
 - When proposing new sections, match the header level used by existing same-level sections in the article.
-- If you notice inconsistent headers (e.g., mix of H1 and H2 for top-level sections), mention that you will normalize them: top-level = H2, sub-sections = H3.
+- If you notice inconsistent headers (e.g., mix of H1 and H2 for top-level sections), also propose a change to normalize them: top-level = H2, sub-sections = H3.
 
 WRITING STYLE for any new/edited text (must match existing Fourwaves help center articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -666,39 +729,77 @@ WRITING STYLE for any new/edited text (must match existing Fourwaves help center
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
 
-OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
-- Use single * for bold (*bold*). NEVER use ** or ## or ### or markdown headers.
-- Number each change (1. 2. 3.)
-- For each change use EXACTLY this format, including the blank lines:
+OUTPUT FORMAT: Return ONLY a JSON object with this shape. No prose, no markdown, no code fences around the JSON:
 
-*[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
-Why: one sentence explaining why
+{
+  "articles": [
+    {
+      "article_title": "exact title of the article",
+      "article_url": "url of the article (copy from thread if available, else empty string)",
+      "changes": [
+        {
+          "type": "UPDATE" | "ADD" | "REMOVE" | "SCREENSHOT",
+          "section": "name of the section in the article",
+          "why": "one sentence explaining why this change is needed",
+          "before": "exact current text (REQUIRED for UPDATE and REMOVE; omit or empty for ADD and SCREENSHOT)",
+          "after": "exact new text (REQUIRED for UPDATE and ADD; omit or empty for REMOVE and SCREENSHOT)",
+          "screenshot_description": "what screenshot to add or update (only for SCREENSHOT type)"
+        }
+      ]
+    }
+  ],
+  "new_article": null | {"title": "...", "description": "...", "outline": "..."}
+}
 
-*Before:*
-```
-exact current text that will be changed
-```
+RULES:
+- "before" and "after" must contain actual prose text, NOT a description of it.
+- Plain text only inside "before" and "after" — no markdown, no code fences, no HTML tags.
+- Keep each change narrowly scoped (one paragraph or one bullet point per change).
+- If an article has no remaining changes after the revision, omit it from "articles".
+- If no new article is needed, set "new_article" to null."""
 
-*After:*
-```
-exact new text that will replace it
-```
-
-CRITICAL FORMATTING RULES (Slack mrkdwn is fragile):
-- Triple backticks (```) MUST be on their own line — never on the same line as content, never immediately after the word "Before:" or "After:".
-- There MUST be a blank line between a closing ``` and the next *Before:*/*After:* label, AND a blank line between changes.
-- The *Before:* and *After:* labels go OUTSIDE the code block, as bold text on their own line.
-
-End with:
----
-You can ask me to revise again, or reply *yes, proceed* to apply the changes."""
-
-    response = call_llm_fn(
+    raw = call_llm_fn(
         revision_prompt,
         f"Full thread conversation:\n{thread_context}\n\nUser's latest revision request:\n{revision_request}",
         model_hint="pro",
     )
-    return response
+
+    try:
+        cleaned = strip_code_fences(raw)
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        log.warning(f"Revision JSON parse failed: {e}. Raw: {raw[:300]!r}")
+        return (
+            "I couldn't parse my own revised proposal. Please ask me to revise again, "
+            "or describe the corrections in a different way."
+        )
+
+    revised_proposals = []
+    for a in data.get("articles", []) or []:
+        changes_list = a.get("changes", []) or []
+        if not changes_list:
+            continue
+        revised_proposals.append({
+            "article_title": a.get("article_title", ""),
+            "article_url": a.get("article_url", ""),
+            "changes_list": changes_list,
+            "changes": render_changes_as_mrkdwn(changes_list),
+        })
+
+    new_article_plan = data.get("new_article") or None
+
+    parts = ["*REVISED PROPOSAL:*\n"]
+    body = render_proposals_section(revised_proposals, new_article_plan)
+    if body:
+        parts.append(body)
+    else:
+        parts.append("No changes remain after your revisions. Let me know if you'd like to start over.")
+        return "\n".join(parts)
+
+    parts.append("\n_Note: When approved, changes will be applied to both English and French versions of each article._")
+    parts.append("\n---")
+    parts.append("You can ask me to revise again, or reply *yes, proceed* to apply the changes.")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
