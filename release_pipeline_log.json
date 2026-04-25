@@ -6,6 +6,18 @@
       "kb_update"
     ],
     "kb_update_thread_ts": "1777144231.208429",
-    "date": "2026-04-25T19:12:33.063714"
+    "date": "2026-04-25T19:12:33.063714",
+    "skills": {
+      "kb_update": {
+        "date": "2026-04-25T19:12:33.063714",
+        "thread_ts": "1777144231.208429"
+      },
+      "notify_upvoters": {
+        "date": "2026-04-25T20:40:13.706678",
+        "drafted": 1,
+        "skipped": 0,
+        "total_insights": 1
+      }
+    }
   }
 }
