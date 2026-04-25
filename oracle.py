@@ -243,42 +243,73 @@ def generate_processing_message():
 
 
 def split_response(text, max_len=39000):
-    """Split text into chunks that fit Slack's limit, never cutting inside code blocks."""
+    """Split text into chunks that fit Slack's limit, never leaving an unbalanced code fence.
+
+    Tries to split at ``\\n\\n`` outside any open code block. If forced to split
+    inside a code block (no safe boundary in range), it appends a closing ```
+    to the head and prepends an opening ``` to the tail so each chunk renders
+    as a self-contained Slack message.
+    """
     chunks = []
     while len(text) > max_len:
         # Find a safe split point: a double newline that's NOT inside a code block
         best_split = -1
         search_end = max_len
 
-        # Count open/close ``` pairs to know if we're inside a code block
         while search_end > max_len // 4:
             pos = text.rfind("\n\n", 0, search_end)
             if pos < 0:
                 break
-            # Count ``` occurrences before this position
-            prefix = text[:pos]
-            backtick_count = prefix.count("```")
-            if backtick_count % 2 == 0:
-                # Even count = we're outside a code block, safe to split
+            if text[:pos].count("```") % 2 == 0:
                 best_split = pos
                 break
-            # Inside a code block — try an earlier split point
             search_end = pos
 
         if best_split < 0:
-            # Fallback: force split at max_len (shouldn't happen often)
+            # No safe split found — force split at max_len.
             best_split = max_len
 
-        chunks.append(text[:best_split])
-        text = text[best_split:].lstrip("\n")
+        head = text[:best_split]
+        tail = text[best_split:].lstrip("\n")
+
+        # Defense in depth: if head has an unclosed code fence, balance it.
+        if head.count("```") % 2 == 1:
+            head = head.rstrip("\n") + "\n```"
+            tail = "```\n" + tail
+
+        chunks.append(head)
+        text = tail
+
     if text:
         chunks.append(text)
     return chunks
 
 
 def post_long_message(channel, text, thread_ts):
-    """Post a message, splitting into multiple if too long for Slack."""
+    """Post a message (str) or sequence of messages (list[str]).
+
+    Lists are posted one Slack message per element — preferred for content with
+    code blocks, since each message renders independently and code fences can't
+    accidentally span a Slack message boundary.
+
+    Strings longer than the per-message limit are split by ``split_response``
+    with code-fence balancing.
+    """
     max_len = 39000
+
+    if isinstance(text, list):
+        for chunk in text:
+            if not chunk:
+                continue
+            if len(chunk) <= max_len:
+                slack_post_message(channel, chunk, thread_ts=thread_ts)
+            else:
+                for sub in split_response(chunk, max_len):
+                    slack_post_message(channel, sub, thread_ts=thread_ts)
+                    time.sleep(0.3)
+            time.sleep(0.3)
+        return
+
     if len(text) <= max_len:
         slack_post_message(channel, text, thread_ts=thread_ts)
     else:

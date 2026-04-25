@@ -75,6 +75,18 @@ def strip_code_fences(text):
     return text
 
 
+def _sanitize_block_content(text):
+    """Strip any literal triple-backticks from text destined for a code block.
+
+    KB article prose never legitimately contains ```, so any occurrence is either
+    LLM noise or accidental and would break Slack's fence parsing. Replace with
+    three single quotes so the content stays readable.
+    """
+    if not text:
+        return text
+    return text.replace("```", "'''")
+
+
 def render_changes_as_mrkdwn(changes_list, fr_changes_list=None):
     """Render a list of change dicts as Slack mrkdwn, deterministically.
 
@@ -112,10 +124,10 @@ def render_changes_as_mrkdwn(changes_list, fr_changes_list=None):
                 parts.append("")
                 parts.append(desc)
         else:
-            before = (change.get("before") or "").strip()
-            after = (change.get("after") or "").strip()
-            before_fr = ((change_fr or {}).get("before") or "").strip()
-            after_fr = ((change_fr or {}).get("after") or "").strip()
+            before = _sanitize_block_content((change.get("before") or "").strip())
+            after = _sanitize_block_content((change.get("after") or "").strip())
+            before_fr = _sanitize_block_content(((change_fr or {}).get("before") or "").strip())
+            after_fr = _sanitize_block_content(((change_fr or {}).get("after") or "").strip())
 
             if before:
                 parts.append("")
@@ -856,14 +868,14 @@ def render_proposals_section(proposals, new_article_plan):
             parts.append(f"*Description (FR):* {new_article_plan.get('fr_description', '')}")
         parts.append("")
 
-        outline = (new_article_plan.get("outline") or "").strip()
+        outline = _sanitize_block_content((new_article_plan.get("outline") or "").strip())
         if outline:
             if outline_label:
                 parts.append(outline_label)
             parts.append("```")
             parts.append(outline)
             parts.append("```")
-        outline_fr = (new_article_plan.get("fr_outline") or "").strip()
+        outline_fr = _sanitize_block_content((new_article_plan.get("fr_outline") or "").strip())
         if outline_fr:
             parts.append("")
             parts.append("*Outline (FR):*")
@@ -874,30 +886,94 @@ def render_proposals_section(proposals, new_article_plan):
     return "\n".join(parts)
 
 
+def _render_article_message(index, proposal):
+    """Build a single Slack message for one article's proposed changes."""
+    lines = [f"*{index}. {proposal['article_title']}*"]
+    if proposal.get("article_url"):
+        lines.append(f"    {proposal['article_url']}")
+    lines.append(proposal["changes"])
+    return "\n".join(lines).rstrip()
+
+
+def _render_new_article_message(new_article_plan):
+    """Build a single Slack message for a recommended new article."""
+    has_fr = bool(new_article_plan.get("fr_title") or new_article_plan.get("fr_outline"))
+    title_label = "*Title (EN):*" if has_fr else "*Title:*"
+    desc_label = "*Description (EN):*" if has_fr else "*Description:*"
+    outline_label = "*Outline (EN):*" if has_fr else None
+
+    lines = ["*NEW ARTICLE RECOMMENDED:*\n"]
+    lines.append(f"{title_label} {new_article_plan.get('title', 'TBD')}")
+    if has_fr:
+        lines.append(f"*Title (FR):* {new_article_plan.get('fr_title', '')}")
+    lines.append(f"{desc_label} {new_article_plan.get('description', '')}")
+    if has_fr:
+        lines.append(f"*Description (FR):* {new_article_plan.get('fr_description', '')}")
+    lines.append("")
+
+    outline = _sanitize_block_content((new_article_plan.get("outline") or "").strip())
+    if outline:
+        if outline_label:
+            lines.append(outline_label)
+        lines.append("```")
+        lines.append(outline)
+        lines.append("```")
+    outline_fr = _sanitize_block_content((new_article_plan.get("fr_outline") or "").strip())
+    if outline_fr:
+        lines.append("")
+        lines.append("*Outline (FR):*")
+        lines.append("```")
+        lines.append(outline_fr)
+        lines.append("```")
+    return "\n".join(lines).rstrip()
+
+
 def format_proposal_message(proposals, new_article_plan, total_articles, notion_pages, release_summary):
-    """Format the change proposal as a Slack mrkdwn message."""
-    parts = []
+    """Build the proposal as a list of Slack messages (one per article + header + trailer).
 
-    # Feature summary from QA Notes — serves as validation
-    parts.append("*FEATURE SUMMARY (from QA Notes):*\n")
-    parts.append(release_summary)
+    Posting one Slack message per article guarantees that code fences inside an
+    article never accidentally span a Slack message boundary, which is the only
+    fully reliable way to avoid mrkdwn rendering issues.
+    """
+    messages = []
 
+    # 1. Header — feature summary + scan count
     feature_names = ", ".join(p["title"] for p in notion_pages)
-    parts.append(f"\n_Scanned {total_articles} published help center articles for: {feature_names}_\n")
+    header = (
+        "*FEATURE SUMMARY (from QA Notes):*\n\n"
+        f"{release_summary}\n\n"
+        f"_Scanned {total_articles} published help center articles for: {feature_names}_"
+    )
+    messages.append(header)
 
-    body = render_proposals_section(proposals, new_article_plan)
-    if body:
-        parts.append(body)
-
+    # 2. Empty-state short-circuit
     if not proposals and not new_article_plan:
-        parts.append("After detailed analysis, no changes are needed for any existing articles and no new article is recommended.")
-        return "\n".join(parts)
+        messages.append(
+            "After detailed analysis, no changes are needed for any existing articles "
+            "and no new article is recommended."
+        )
+        return messages
 
-    parts.append("\n_Note: When approved, updates will be applied to both English and French versions, and any new article will be created and published._")
-    parts.append("\n---")
-    parts.append("You can ask me to revise the proposal, or reply *yes, proceed* to apply the changes.")
+    # 3. One message per article
+    if proposals:
+        messages.append(f"*ARTICLES TO UPDATE ({len(proposals)}):*")
+        for i, p in enumerate(proposals, 1):
+            messages.append(_render_article_message(i, p))
 
-    return "\n".join(parts)
+    # 4. New article (own message)
+    if new_article_plan:
+        messages.append(_render_new_article_message(new_article_plan))
+
+    # 5. Trailer — note + approval prompt
+    trailer = (
+        "_Note: When approved, updates will be applied to both English and French "
+        "versions, and any new article will be created and published._\n\n"
+        "---\n"
+        "You can ask me to revise the proposal, or reply *yes, proceed* to apply the changes."
+    )
+    messages.append(trailer)
+
+    return messages
 
 
 # ---------------------------------------------------------------------------
@@ -1013,18 +1089,29 @@ RULES:
 
     new_article_plan = data.get("new_article") or None
 
-    parts = ["*REVISED PROPOSAL:*\n"]
-    body = render_proposals_section(revised_proposals, new_article_plan)
-    if body:
-        parts.append(body)
-    else:
-        parts.append("No changes remain after your revisions. Let me know if you'd like to start over.")
-        return "\n".join(parts)
+    if not revised_proposals and not new_article_plan:
+        return [
+            "*REVISED PROPOSAL:*\n\n"
+            "No changes remain after your revisions. Let me know if you'd like to start over."
+        ]
 
-    parts.append("\n_Note: When approved, updates will be applied to both English and French versions, and any new article will be created and published._")
-    parts.append("\n---")
-    parts.append("You can ask me to revise again, or reply *yes, proceed* to apply the changes.")
-    return "\n".join(parts)
+    messages = ["*REVISED PROPOSAL:*"]
+
+    if revised_proposals:
+        messages.append(f"*ARTICLES TO UPDATE ({len(revised_proposals)}):*")
+        for i, p in enumerate(revised_proposals, 1):
+            messages.append(_render_article_message(i, p))
+
+    if new_article_plan:
+        messages.append(_render_new_article_message(new_article_plan))
+
+    messages.append(
+        "_Note: When approved, updates will be applied to both English and French "
+        "versions, and any new article will be created and published._\n\n"
+        "---\n"
+        "You can ask me to revise again, or reply *yes, proceed* to apply the changes."
+    )
+    return messages
 
 
 # ---------------------------------------------------------------------------
