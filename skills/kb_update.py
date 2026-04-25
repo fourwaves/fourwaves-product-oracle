@@ -462,10 +462,16 @@ An article is NOT relevant if:
 
 Be PRECISE — only include articles whose content is directly affected by the release. Do not include articles just because they share a keyword or general topic. We want quality over quantity.
 
+If the user's request includes explicit exclusions or scoping constraints (e.g., "ignore X", "skip Y", "except for Z"), honor them: exclude any article whose only relevance is the excluded topic.
+
 Return ONLY a JSON array of ID numbers. Example: [123, 456]
 If none are relevant, return: []"""
 
-        user_prompt = f"RELEASE SUMMARY:\n{release_summary}\n\nARTICLES TO EVALUATE:\n{batch_text}"
+        user_prompt = (
+            f"RELEASE SUMMARY:\n{release_summary}\n\n"
+            f"ARTICLES TO EVALUATE:\n{batch_text}\n\n"
+            f"USER REQUEST (verbatim — honor any explicit exclusions or scoping constraints stated here):\n{message_text}"
+        )
 
         try:
             raw = call_llm_fn(scoring_prompt, user_prompt, model_hint="flash")
@@ -500,9 +506,11 @@ DESCRIPTION FORMAT RULES:
 - Start with "This article explains how to..." or "This article explains how you can..."
 - Exactly ONE sentence, ending with a period, 60-120 characters
 
+If the user's request includes explicit exclusions (e.g., "ignore X"), honor them: do not include the excluded topic in the article.
+
 Return a JSON object with: {"title": "...", "description": "...", "outline": "..."}
 The outline should be a bullet-pointed structure of what the article should cover.""",
-            f"Release:\n{release_summary}",
+            f"Release:\n{release_summary}\n\nUSER REQUEST (verbatim — honor any explicit exclusions or scoping constraints stated here):\n{message_text}",
             model_hint="pro",
         )
         return (
@@ -535,6 +543,7 @@ CRITICAL: Only propose changes that are DIRECTLY related to this article's topic
 SCOPE — what NOT to propose:
 - Do NOT propose changes whose only purpose is to fix existing inconsistencies in the article (header levels, formatting, styling, typos, tone, restructuring, etc.). The user is reviewing changes for THIS release only — drive-by cleanup of pre-existing content makes the approval process painful.
 - Only propose a change if the release content itself requires it. Existing sections that are not affected by the release must be left alone, even if their headers or style are inconsistent.
+- If the user's request includes explicit exclusions or constraints (e.g., "ignore X", "skip Y", "except for Z"), honor them: do not propose changes about the excluded topics, even if they would otherwise be relevant.
 
 HEADER HIERARCHY RULES (apply ONLY to NEW sections being added by this release):
 - When ADDING a new section because of the release, look at the existing HTML headers around where it will be inserted and pick the matching level: a new top-level section uses the same level as other top-level sections, a new sub-section uses the same level as sibling sub-sections.
@@ -570,7 +579,11 @@ Example output:
   {"type": "ADD", "section": "Preview", "why": "Document the new preview step.", "after": "Click Preview to see what the certificate will look like before distributing it."}
 ]"""
 
-        user_prompt = f"RELEASE SUMMARY:\n{release_summary}\n\n{article_detail}"
+        user_prompt = (
+            f"RELEASE SUMMARY:\n{release_summary}\n\n"
+            f"{article_detail}\n\n"
+            f"USER REQUEST (verbatim — honor any explicit exclusions or scoping constraints stated here):\n{message_text}"
+        )
 
         try:
             raw = call_llm_fn(proposal_prompt, user_prompt, model_hint="pro")
@@ -619,6 +632,8 @@ DESCRIPTION FORMAT RULES (must follow exactly):
 - Mention the key action AND its context/purpose
 - Do NOT start with "In this article..." or "Learn how to..."
 
+If the user's request includes explicit exclusions (e.g., "ignore X"), honor them: do not propose a new article whose primary topic is the excluded one, and do not include the excluded topic in the outline.
+
 If a new article is needed, return a JSON object:
 {"needed": true, "title": "...", "description": "...", "outline": "full draft of the article content in plain text with section headers and bullet points — this will be shown in a Slack code block for review"}
 
@@ -627,7 +642,11 @@ If NOT needed, return: {"needed": false}"""
     existing_titles = "\n".join(f"- {p['article_title']}" for p in detailed_proposals)
     new_article_raw = call_llm_fn(
         new_article_prompt,
-        f"Release:\n{release_summary}\n\nArticles being updated:\n{existing_titles}",
+        (
+            f"Release:\n{release_summary}\n\n"
+            f"Articles being updated:\n{existing_titles}\n\n"
+            f"USER REQUEST (verbatim — honor any explicit exclusions or scoping constraints stated here):\n{message_text}"
+        ),
         model_hint="pro",
     )
 
