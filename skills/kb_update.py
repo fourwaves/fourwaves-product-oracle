@@ -555,6 +555,7 @@ WRITING STYLE for any new/edited text (must match existing articles):
 - Step-by-step instructions for how-to content (1. Go to... 2. Click... 3. Select...).
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
+- Present tense, current-state only. The knowledge base describes how the product works today — NOT that something changed. Do NOT use "now", "will now", "has been updated", "recently", "from now on", or any wording that signals a change from a previous state. Example: write "Variables display their short label." NOT "Variables will now display their short label.".
 
 OUTPUT FORMAT: Return ONLY a JSON array of change objects. No prose, no markdown, no code fences around the JSON. If no changes are needed, return: []
 
@@ -753,6 +754,7 @@ WRITING STYLE for any new/edited text (must match existing Fourwaves help center
 - Step-by-step instructions for how-to content (1. Go to... 2. Click... 3. Select...).
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
+- Present tense, current-state only. The knowledge base describes how the product works today — NOT that something changed. Do NOT use "now", "will now", "has been updated", "recently", "from now on", or any wording that signals a change from a previous state. Example: write "Variables display their short label." NOT "Variables will now display their short label.".
 
 OUTPUT FORMAT: Return ONLY a JSON object with this shape. No prose, no markdown, no code fences around the JSON:
 
@@ -939,6 +941,7 @@ RULES:
   * Use <ul>/<ol> lists whenever possible instead of long paragraphs.
   * Step-by-step numbered instructions for how-to content.
   * Speak directly to the user ("You can...", "Click...", "Go to...").
+  * Present tense, current-state only. The KB describes how the product works today — NOT that something changed. Do NOT use "now", "will now", "has been updated", "recently", "from now on", or any wording that signals a change from a previous state. Example: write "Variables display their short label." NOT "Variables will now display their short label.". If the approved changes describe a behavior change, rewrite it as the new current behavior — do not narrate the change itself.
 - Return ONLY the updated HTML body, nothing else"""
 
             user_prompt = (
@@ -975,6 +978,7 @@ RULES:
 - Match the tone and style of the existing French content
 - Use "vous" form (formal), consistent with the existing French articles
 - Translate UI labels to their French equivalents (e.g., "Event Data" → "Données", "Registrations" → "Inscriptions", "Actions" → "Actions", "Save and continue" → "Sauvegarder et continuer")
+- Présent, état actuel uniquement. La base de connaissances décrit le fonctionnement actuel du produit — pas un changement. N'utilisez PAS « désormais », « maintenant », « a été mis à jour », « récemment », « dorénavant », ni aucune formulation qui évoque un changement par rapport à un état antérieur. Exemple : écrire « Les variables affichent leur libellé court. » et NON « Les variables affichent désormais leur libellé court. ».
 - Return ONLY the updated French HTML body, nothing else"""
 
                 fr_user_prompt = (
@@ -1031,6 +1035,7 @@ CONTENT RULES:
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
 - Aimed at non-technical event organizers — avoid jargon.
+- Present tense, current-state only. The article describes how the product works today — NOT that it was recently added or changed. Do NOT use "now", "will now", "has been added", "recently", "new feature", "from now on", or any wording that signals a change from a previous state. Write as if the feature has always existed.
 - Add [SCREENSHOT: description] placeholders where screenshots would help.
 - Return ONLY the HTML body"""
 
@@ -1057,6 +1062,7 @@ RULES:
 - Translate UI labels to their French equivalents used in the Fourwaves app
 - FRENCH TITLE: Use imperative verb form in French, concise (3-8 words)
 - FRENCH DESCRIPTION: Start with "Cet article explique comment..." — one sentence, period at end
+- Présent, état actuel uniquement. L'article décrit le fonctionnement actuel du produit — pas un ajout récent. N'utilisez PAS « désormais », « maintenant », « a été ajouté », « récemment », « nouvelle fonctionnalité », « dorénavant », ni aucune formulation qui évoque un changement par rapport à un état antérieur. Rédigez comme si la fonctionnalité avait toujours existé.
 - Return ONLY the JSON object"""
 
             fr_raw = call_llm_fn(
