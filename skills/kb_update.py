@@ -365,6 +365,34 @@ def format_article_for_scoring(article):
     )
 
 
+def _raise_for_intercom(resp, op_label):
+    """Like resp.raise_for_status(), but include Intercom's response body in the message.
+
+    Intercom returns useful error details in the JSON body (e.g.,
+    {"errors": [{"code": "parameter_invalid", "message": "..."}]}). The default
+    raise_for_status throws those away.
+    """
+    if resp.ok:
+        return
+    body_text = ""
+    try:
+        data = resp.json()
+        errors = data.get("errors") if isinstance(data, dict) else None
+        if isinstance(errors, list) and errors:
+            body_text = "; ".join(
+                f"{e.get('code', '?')}: {e.get('message', '')}".strip(": ")
+                for e in errors if isinstance(e, dict)
+            )
+        if not body_text:
+            body_text = json.dumps(data)[:500]
+    except Exception:
+        body_text = (resp.text or "")[:500]
+    raise requests.HTTPError(
+        f"Intercom {op_label} {resp.status_code}: {body_text}",
+        response=resp,
+    )
+
+
 def update_intercom_article(article_id, title=None, body=None, description=None, translated_content=None):
     """Update an Intercom article. Use translated_content to update specific locales."""
     payload = {}
@@ -382,7 +410,7 @@ def update_intercom_article(article_id, title=None, body=None, description=None,
         headers=INTERCOM_HEADERS,
         json=payload,
     )
-    resp.raise_for_status()
+    _raise_for_intercom(resp, f"update {article_id}")
     return resp.json()
 
 
@@ -407,7 +435,7 @@ def create_intercom_article(title, body, description="", parent_id=None, parent_
         headers=INTERCOM_HEADERS,
         json=payload,
     )
-    resp.raise_for_status()
+    _raise_for_intercom(resp, "create article")
     return resp.json()
 
 
@@ -1290,12 +1318,23 @@ RULES:
 
                 new_fr_body = strip_code_fences(call_llm_fn(fr_update_prompt, fr_user_prompt, model_hint="pro"))
 
-            # Apply the updates (both languages in one API call)
+            # Apply the updates (both languages in one API call).
+            # Intercom treats translated_content[<locale>] as a full replacement
+            # for that locale, so we always send the complete FR object (title,
+            # description, body, author_id) — sending only `body` causes a 400.
             if new_fr_body:
+                fr_payload = {
+                    "type": fr_content.get("type", "article_translated_content"),
+                    "title": fr_title,
+                    "description": fr_description,
+                    "body": new_fr_body,
+                    "author_id": fr_content.get("author_id") or INTERCOM_AUTHOR_ID,
+                    "state": fr_content.get("state", "published"),
+                }
                 update_intercom_article(
                     article_id,
                     body=new_en_body,
-                    translated_content={"fr": {"body": new_fr_body}},
+                    translated_content={"fr": fr_payload},
                 )
                 lang_note = "EN + FR"
             else:
