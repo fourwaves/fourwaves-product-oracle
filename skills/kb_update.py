@@ -532,10 +532,13 @@ Given the release details and an existing help center article, determine what sp
 
 CRITICAL: Only propose changes that are DIRECTLY related to this article's topic. If the release affects a different feature than what this article covers, return an empty list []. Do NOT propose adding content about tangentially related features.
 
-HEADER HIERARCHY RULES (very important):
-- Look at the existing HTML headers in the article (h1, h2, h3, etc.).
-- When adding new sections, MATCH the header level used by existing same-level sections. For example, if existing top-level sections use <h2>, new top-level sections must also use <h2>.
-- If you detect INCONSISTENT header levels (e.g., some top-level sections use <h1> and others use <h2>), also propose a change to normalize headers. The standard is: top-level sections = <h2>, sub-sections = <h3>.
+SCOPE — what NOT to propose:
+- Do NOT propose changes whose only purpose is to fix existing inconsistencies in the article (header levels, formatting, styling, typos, tone, restructuring, etc.). The user is reviewing changes for THIS release only — drive-by cleanup of pre-existing content makes the approval process painful.
+- Only propose a change if the release content itself requires it. Existing sections that are not affected by the release must be left alone, even if their headers or style are inconsistent.
+
+HEADER HIERARCHY RULES (apply ONLY to NEW sections being added by this release):
+- When ADDING a new section because of the release, look at the existing HTML headers around where it will be inserted and pick the matching level: a new top-level section uses the same level as other top-level sections, a new sub-section uses the same level as sibling sub-sections.
+- Do NOT propose normalizing or "fixing" header levels of existing sections, even if you notice they are inconsistent. That is out of scope for this skill.
 
 WRITING STYLE for any new/edited text (must match existing articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -718,9 +721,12 @@ IMPORTANT:
 - If the user corrected factual details, apply those corrections to the before/after text.
 - Show the FULL revised proposal (all articles and all changes that still apply), not just what changed.
 
-HEADER HIERARCHY RULES:
-- When proposing new sections, match the header level used by existing same-level sections in the article.
-- If you notice inconsistent headers (e.g., mix of H1 and H2 for top-level sections), also propose a change to normalize them: top-level = H2, sub-sections = H3.
+SCOPE — what NOT to propose:
+- Do NOT propose changes whose only purpose is to fix existing inconsistencies in the article (header levels, formatting, styling, typos, tone, restructuring, etc.). Only propose a change if the release content itself requires it. Existing sections that are not affected by the release must be left alone, even if their headers or style are inconsistent.
+
+HEADER HIERARCHY RULES (apply ONLY to NEW sections being added by this release):
+- When ADDING a new section, match the header level used by existing same-level sections in the article (top-level new section = same level as other top-level sections; sub-section = same level as sibling sub-sections).
+- Do NOT propose normalizing or "fixing" header levels of existing sections.
 
 WRITING STYLE for any new/edited text (must match existing Fourwaves help center articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -908,7 +914,7 @@ RULES:
 - Preserve the existing HTML structure and formatting exactly
 - Only make the specified changes — do not rewrite unrelated sections
 - Keep the same HTML tags and CSS classes
-- HEADER HIERARCHY: When adding new sections, use the same header level as existing same-level sections. If top-level sections use <h2>, new top-level sections must use <h2>. If you see inconsistent headers (mix of <h1> and <h2> for same-level sections), normalize them: top-level = <h2>, sub-sections = <h3>.
+- HEADER HIERARCHY: When ADDING a new section, use the same header level as existing same-level sections in the article (e.g., if top-level sections use <h2>, the new top-level section must use <h2>). Do NOT normalize or change the header level of existing sections, even if you notice inconsistencies — only the new section being added is in scope.
 - If adding new content, match the style of the existing content exactly:
   * Short, straight-to-the-point sentences. No filler or marketing language.
   * Use <ul>/<ol> lists whenever possible instead of long paragraphs.
