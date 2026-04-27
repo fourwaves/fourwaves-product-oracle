@@ -261,5 +261,12 @@
     "skill": "insights",
     "error": "404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/text-embedding-004 is not found for API version v1beta, or is not supported for embedContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
     "date": "2026-04-27T18:17:53.515226"
+  },
+  "1777329155.166389": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Find all user needs, requests, pain points, or examples related to sending emails to specific groups of people based on precise conditions or criteria.\nI want ONLY a list of concrete use cases (no explanations, no descriptions, no grouping, no additional context). Return ONLY a clean bullet list of use cases.",
+    "response_length": 7667,
+    "date": "2026-04-27T22:48:30.424240"
   }
 }
