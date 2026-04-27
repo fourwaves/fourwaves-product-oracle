@@ -1,7 +1,7 @@
 """
 Embedding-based shortlist helper — shared between insights and transcripts skills.
 
-Uses Gemini text-embedding-004 to narrow a large corpus down to the top-N most
+Uses Gemini gemini-embedding-001 to narrow a large corpus down to the top-N most
 semantically similar items before running expensive LLM relevance scoring.
 
 Design:
@@ -25,7 +25,8 @@ import time
 
 log = logging.getLogger("oracle.embeddings")
 
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_OUTPUT_DIM = 768  # match retired text-embedding-004 size; keeps cache files small
 EMBEDDING_BATCH_SIZE = 100  # max items per embed_content call
 EMBED_ROUND_DECIMALS = 4    # float precision on disk (negligible cosine impact)
 
@@ -63,7 +64,10 @@ def _embed_texts(texts, task_type="RETRIEVAL_DOCUMENT"):
                 resp = client.models.embed_content(
                     model=EMBEDDING_MODEL,
                     contents=batch,
-                    config=types.EmbedContentConfig(task_type=task_type),
+                    config=types.EmbedContentConfig(
+                        task_type=task_type,
+                        output_dimensionality=EMBEDDING_OUTPUT_DIM,
+                    ),
                 )
                 all_vecs.extend([e.values for e in resp.embeddings])
                 break
