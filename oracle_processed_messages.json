@@ -255,5 +255,11 @@
     "thread_ts": "1777144231.208429",
     "text": "yes proceed",
     "date": "2026-04-25T19:35:03.435640"
+  },
+  "1777312398.449929": {
+    "status": "error",
+    "skill": "insights",
+    "error": "404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/text-embedding-004 is not found for API version v1beta, or is not supported for embedContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+    "date": "2026-04-27T18:17:53.515226"
   }
 }
