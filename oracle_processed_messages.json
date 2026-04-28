@@ -268,5 +268,12 @@
     "query": "Find all user needs, requests, pain points, or examples related to sending emails to specific groups of people based on precise conditions or criteria.\nI want ONLY a list of concrete use cases (no explanations, no descriptions, no grouping, no additional context). Return ONLY a clean bullet list of use cases.",
     "response_length": 7667,
     "date": "2026-04-27T22:48:30.424240"
+  },
+  "1777385482.136089": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Your task is to find ALL the user insights from event organizers that mention wanting to send an email (for example: to participants, presenters, authors, registrants, track chairs, reviewers, etc.) AND that mention either:\n1) the purpose of the email (for example: notify them of acceptance, to remind them to complete their pending reviews, ask them to register, to send a survey, etc.) OR\n2) a specific target audience (for example: only those who are registered to attend in-person, those who are",
+    "response_length": 16076,
+    "date": "2026-04-28T14:25:47.028996"
   }
 }
