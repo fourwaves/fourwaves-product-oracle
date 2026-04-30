@@ -45,6 +45,7 @@ from oracle import (
 )
 from skills.kb_update import handle_kb_update
 from skills.notify_upvoters import handle_notify_upvoters
+from skills.product_brain_update import handle_product_brain_update
 
 load_dotenv()
 
@@ -145,6 +146,43 @@ def trigger_notify_upvoters(opp_id, title):
         return None
 
 
+def trigger_product_brain_update(title, page_url):
+    """Post the parent notification + product_brain_update suggestions in a
+    thread, and register the thread for follow-up handling. Returns the
+    parent thread ts.
+    """
+    parent_text = (
+        f"Updates to the product brain for the product opportunity "
+        f"<{page_url}|{title}>."
+    )
+
+    log.info(f"Posting product_brain parent notification for '{title}'...")
+    parent_resp = slack_post_message(ORACLE_CHANNEL_ID, parent_text)
+    parent_ts = parent_resp.get("ts")
+    if not parent_ts:
+        raise RuntimeError("chat.postMessage returned no ts.")
+
+    log.info(f"Running product_brain_update for '{title}'...")
+    response = handle_product_brain_update(parent_text, call_llm)
+
+    log.info(f"Posting product_brain_update response in thread {parent_ts}...")
+    post_long_message(ORACLE_CHANNEL_ID, response, thread_ts=parent_ts)
+
+    response_length = (
+        sum(len(c) for c in response) if isinstance(response, list) else len(response)
+    )
+    processed = load_processed_messages()
+    processed[parent_ts] = {
+        "status": "active",
+        "skill": "product_brain_update",
+        "query": parent_text[:500],
+        "response_length": response_length,
+        "date": datetime.now().isoformat(),
+    }
+    save_processed_messages(processed)
+    return parent_ts
+
+
 def trigger_kb_update(title, page_url):
     """Post the parent notification + kb_update suggestions in a thread, and
     register the thread for follow-up handling. Returns the parent thread ts.
@@ -238,6 +276,19 @@ def run(target_date=None):
                 log.info(f"  kb_update done. Thread ts={parent_ts}")
             except Exception as e:
                 log.error(f"  kb_update failed for '{title}': {e}")
+
+        if "product_brain_update" in skills_done:
+            log.info(f"  Skip product_brain_update — already triggered on {skills_done['product_brain_update'].get('date', '?')}.")
+        else:
+            try:
+                pb_parent_ts = trigger_product_brain_update(title, page_url)
+                skills_done["product_brain_update"] = {
+                    "date": datetime.now().isoformat(),
+                    "thread_ts": pb_parent_ts,
+                }
+                log.info(f"  product_brain_update done. Thread ts={pb_parent_ts}")
+            except Exception as e:
+                log.error(f"  product_brain_update failed for '{title}': {e}")
 
         if "notify_upvoters" in skills_done:
             log.info(f"  Skip notify_upvoters — already triggered on {skills_done['notify_upvoters'].get('date', '?')}.")

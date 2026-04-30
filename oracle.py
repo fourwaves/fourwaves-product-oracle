@@ -326,6 +326,7 @@ SKILL_DESCRIPTIONS = """Available skills:
 - transcripts: Search through full call transcripts (sales calls, support calls, demos, onboarding, feedback sessions). Triggered when the user explicitly mentions "call transcripts", "transcripts", "calls", or wants to search through what was said in actual calls/meetings.
 - insights: Answer product questions using the Fourwaves user insights database. Triggered when the user mentions "user insights", "insights", or asks about user feedback, feature requests, pain points, or product topics WITHOUT mentioning call transcripts.
 - kb_update: Update the Intercom knowledge base (help center articles) based on Notion product release pages. Triggered when the user mentions updating the knowledge base, help center, or provides Notion page URLs describing new features or product updates.
+- product_brain_update: Update the Notion product brain database based on Notion product release pages. Triggered when the user mentions updating the "product brain" or "brain" and provides Notion page URLs describing new features or product updates.
 """
 
 
@@ -343,6 +344,12 @@ def classify_skill(text):
         return "transcripts"
 
     if ("notion.so/" in text_lower or "notion.site/" in text_lower) and any(
+        kw in text_lower for kw in ["product brain", "brain"]
+    ):
+        log.info("  Keyword pre-check → product_brain_update")
+        return "product_brain_update"
+
+    if ("notion.so/" in text_lower or "notion.site/" in text_lower) and any(
         kw in text_lower for kw in ["knowledge base", "help center", "kb", "article"]
     ):
         log.info("  Keyword pre-check → kb_update")
@@ -355,6 +362,7 @@ def classify_skill(text):
 
 Rules:
 - If the message explicitly mentions "call transcript(s)", "transcripts", "calls", "what was said in calls/meetings", or wants to search through actual call recordings/transcripts → return "transcripts"
+- If the message contains one or more Notion page URLs and explicitly mentions the "product brain" or "brain" → return "product_brain_update"
 - If the message contains one or more Notion page URLs (notion.so or notion.site) and talks about features released, product updates, or knowledge base/help center updates → return "kb_update"
 - If the message mentions "user insights", "insights", or asks about user feedback, feature requests, pain points, what users think (without specifically mentioning call transcripts) → return "insights"
 - If the message is a system notification (e.g., "X was added to the channel"), casual chat, or doesn't match any skill → return "none"
@@ -528,6 +536,9 @@ def run_slack_poll():
             if skill == "kb_update":
                 from skills.kb_update import handle_kb_update
                 response = handle_kb_update(text, call_llm)
+            elif skill == "product_brain_update":
+                from skills.product_brain_update import handle_product_brain_update
+                response = handle_product_brain_update(text, call_llm)
             elif skill == "insights":
                 from skills.insights import handle_insights_query
                 response = handle_insights_query(text, call_llm)
@@ -658,6 +669,16 @@ def run_slack_poll():
                             call_llm,
                         )
                         processed[thread_ts]["status"] = "completed"
+                    elif skill == "product_brain_update":
+                        log.info(f"  Approval detected, executing product brain changes...")
+                        from skills.product_brain_update import execute_approved_product_brain_changes
+                        response = execute_approved_product_brain_changes(
+                            entry.get("query", ""),
+                            followup_text,
+                            thread_context,
+                            call_llm,
+                        )
+                        processed[thread_ts]["status"] = "completed"
                     else:
                         # For non-actionable skills, treat approve as a followup
                         response = call_llm(
@@ -672,6 +693,10 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
                         from skills.kb_update import handle_kb_revision
                         response = handle_kb_revision(thread_context, followup_text, call_llm)
                         # Keep status as active — user is still iterating
+                        processed[thread_ts]["status"] = "active"
+                    elif skill == "product_brain_update":
+                        from skills.product_brain_update import handle_product_brain_revision
+                        response = handle_product_brain_revision(thread_context, followup_text, call_llm)
                         processed[thread_ts]["status"] = "active"
                     elif skill == "insights":
                         from skills.insights import handle_insights_followup
