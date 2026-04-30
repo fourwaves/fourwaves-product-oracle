@@ -55,7 +55,7 @@ PRODUCT_BRAIN_DB = "2b98b055-517b-80ef-9733-d05ed8018f61"
 # so the code keeps working if a property gets renamed in Notion.
 TITLE_PROPERTY = "Name"
 MODULE_PROPERTY = "Module"
-SUBMODULE_PROPERTY = "Sub-module"
+SUBMODULE_PROPERTY = "Submodule"
 STATUS_PROPERTY = "Status"
 PUBLISHED_STATUS = "Published"
 
@@ -239,94 +239,107 @@ def collect_property_value_usage(pages, property_name):
 # Notion: applying changes
 # ---------------------------------------------------------------------------
 
-def _markdown_line_to_block(line):
-    """Convert a single markdown-ish line into a Notion block dict."""
-    stripped = line.rstrip()
-    if not stripped:
-        return None
+_LIST_TYPES = ("bulleted_list_item", "numbered_list_item", "to_do")
 
-    # Headings
-    m = re.match(r"^(#{1,3})\s+(.*)$", stripped)
+
+def _make_text_block(block_type, text, **extra):
+    """Build a Notion block with a single rich_text entry, clipped to 1900 chars
+    (Notion's per-text limit is 2000 — we leave headroom for safety)."""
+    content = (text or "")[:1900]
+    body = {"rich_text": [{"type": "text", "text": {"content": content}}]}
+    body.update(extra)
+    return {"object": "block", "type": block_type, block_type: body}
+
+
+def _parse_md_line(raw_line):
+    """Parse one markdown line. Returns (block, indent) or (None, 0) for blanks.
+
+    `indent` is the list-nesting depth measured in 2-space units of leading
+    whitespace before the list marker (0 = top-level). Non-list blocks always
+    return indent=0.
+    """
+    if not raw_line.strip():
+        return None, 0
+
+    # Headings (only at column 0)
+    m = re.match(r"^(#{1,3})\s+(.*)$", raw_line.rstrip())
     if m:
         level = len(m.group(1))
-        text = m.group(2).strip()
-        block_type = f"heading_{level}"
-        return {
-            "object": "block",
-            "type": block_type,
-            block_type: {"rich_text": [{"type": "text", "text": {"content": text}}]},
-        }
+        return _make_text_block(f"heading_{level}", m.group(2).strip()), 0
 
-    # Numbered list
-    m = re.match(r"^\s*\d+\.\s+(.*)$", stripped)
+    # To-do (must come before generic bullet match)
+    m = re.match(r"^(\s*)[-*+]\s+\[( |x|X)\]\s+(.*)$", raw_line.rstrip())
     if m:
-        text = m.group(1).strip()
-        return {
-            "object": "block",
-            "type": "numbered_list_item",
-            "numbered_list_item": {
-                "rich_text": [{"type": "text", "text": {"content": text}}]
-            },
-        }
+        indent = len(m.group(1)) // 2
+        checked = m.group(2).lower() == "x"
+        block = _make_text_block("to_do", m.group(3).strip(), checked=checked)
+        return block, indent
 
-    # Bulleted list (allow -, *, +)
-    m = re.match(r"^\s*[-*+]\s+(.*)$", stripped)
+    # Numbered list with possible indent
+    m = re.match(r"^(\s*)\d+\.\s+(.*)$", raw_line.rstrip())
     if m:
-        text = m.group(1).strip()
-        return {
-            "object": "block",
-            "type": "bulleted_list_item",
-            "bulleted_list_item": {
-                "rich_text": [{"type": "text", "text": {"content": text}}]
-            },
-        }
+        indent = len(m.group(1)) // 2
+        return _make_text_block("numbered_list_item", m.group(2).strip()), indent
+
+    # Bulleted list with possible indent (-, *, +)
+    m = re.match(r"^(\s*)[-*+]\s+(.*)$", raw_line.rstrip())
+    if m:
+        indent = len(m.group(1)) // 2
+        return _make_text_block("bulleted_list_item", m.group(2).strip()), indent
+
+    # Divider
+    if raw_line.strip() == "---":
+        return {"object": "block", "type": "divider", "divider": {}}, 0
 
     # Quote
+    stripped = raw_line.lstrip()
     if stripped.startswith("> "):
-        return {
-            "object": "block",
-            "type": "quote",
-            "quote": {
-                "rich_text": [{"type": "text", "text": {"content": stripped[2:].strip()}}]
-            },
-        }
+        return _make_text_block("quote", stripped[2:].strip()), 0
 
     # Default: paragraph
-    return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": stripped}}]
-        },
-    }
+    return _make_text_block("paragraph", raw_line.strip()), 0
 
 
 def markdown_to_notion_blocks(text):
-    """Convert simple markdown (headings, lists, paragraphs) into Notion blocks.
+    """Convert simple markdown into Notion blocks.
 
-    Notion's API caps rich_text content at 2000 chars per block, so paragraph
-    blocks longer than that are split.
+    Supports headings (h1-h3), paragraphs, bulleted/numbered lists, to-do,
+    quotes, and dividers. Nested list items (2-space indent per level) become
+    children of their parent list item via Notion's `children` field, so the
+    visual tree round-trips through Notion's API.
     """
-    blocks = []
+    top_blocks = []
+    # Stack of (parent_block, indent) — the parent at each currently-open
+    # list-nesting level. Reset whenever a non-list block lands.
+    stack = []
+
     for raw_line in (text or "").splitlines():
-        block = _markdown_line_to_block(raw_line)
-        if not block:
+        block, indent = _parse_md_line(raw_line)
+        if block is None:
             continue
-        # Split long content per Notion's 2000-char limit per rich_text item.
-        block_type = block["type"]
-        rt = block[block_type]["rich_text"]
-        if rt and len(rt[0]["text"]["content"]) > 1900:
-            content = rt[0]["text"]["content"]
-            chunks = [content[i:i + 1900] for i in range(0, len(content), 1900)]
-            for chunk in chunks:
-                clone = json.loads(json.dumps(block))
-                clone[block_type]["rich_text"] = [
-                    {"type": "text", "text": {"content": chunk}}
-                ]
-                blocks.append(clone)
+
+        bt = block["type"]
+        is_list = bt in _LIST_TYPES
+
+        if not is_list:
+            stack = []
+            top_blocks.append(block)
+            continue
+
+        # Pop the stack down to the parent indent
+        while stack and stack[-1][1] >= indent:
+            stack.pop()
+
+        if not stack:
+            top_blocks.append(block)
         else:
-            blocks.append(block)
-    return blocks
+            parent_block, _ = stack[-1]
+            parent_data = parent_block[parent_block["type"]]
+            parent_data.setdefault("children", []).append(block)
+
+        stack.append((block, indent))
+
+    return top_blocks
 
 
 def replace_page_body(page_id, markdown_text):
