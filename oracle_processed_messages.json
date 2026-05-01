@@ -282,5 +282,12 @@
     "query": "Find all the user insights that talk about not finding how to edit decisions for submissions. Often they cannot find how to create presentation types.",
     "response_length": 6318,
     "date": "2026-05-01T14:11:17.103762"
+  },
+  "1777646814.699669": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Find all the user insights that talk about not finding how to edit decisions for submissions. Often they cannot find how to create presentation types. Provide for each the clickable link to the Notion page of the user insight.",
+    "response_length": 6558,
+    "date": "2026-05-01T15:03:12.427467"
   }
 }
