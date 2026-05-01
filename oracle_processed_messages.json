@@ -275,5 +275,12 @@
     "query": "Your task is to find ALL the user insights from event organizers that mention wanting to send an email (for example: to participants, presenters, authors, registrants, track chairs, reviewers, etc.) AND that mention either:\n1) the purpose of the email (for example: notify them of acceptance, to remind them to complete their pending reviews, ask them to register, to send a survey, etc.) OR\n2) a specific target audience (for example: only those who are registered to attend in-person, those who are",
     "response_length": 16076,
     "date": "2026-04-28T14:25:47.028996"
+  },
+  "1777643215.207649": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Find all the user insights that talk about not finding how to edit decisions for submissions. Often they cannot find how to create presentation types.",
+    "response_length": 6318,
+    "date": "2026-05-01T14:11:17.103762"
   }
 }
